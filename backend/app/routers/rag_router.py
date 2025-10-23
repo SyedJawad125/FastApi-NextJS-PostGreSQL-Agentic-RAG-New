@@ -199,29 +199,19 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
         rag_service = get_rag_orchestrator()
         vector_store = get_vectorstore()  # ✅ ChromaDB instance
         
-        # ✅ FIXED SAFETY CHECK: Verify database AND ChromaDB have data
+        # ✅ FIXED: Only log the state, don't reject queries
         total_docs = db.query(Document).count()
         total_chunks = db.query(DocumentChunk).count()
         vector_count = vector_store.get_count()
         
-        # ✅ ChromaDB doesn't have _is_cleared, so remove that check
         logger.info(
             f"[DATABASE] Current state: {total_docs} docs, {total_chunks} chunks, "
             f"{vector_count} vectors in ChromaDB"
         )
         
-        # ✅ IMMEDIATE REJECTION if no data exists (updated for ChromaDB)
-        if total_docs == 0 and total_chunks == 0 and vector_count == 0:
-            logger.warning("[SAFETY] No documents/vectors in system - rejecting query")
-            return RAGQueryResponse(
-                query=request.query,
-                answer="No documents found in the system. Please upload CVs first.",
-                strategy_used="direct",
-                processing_time=0.1,
-                retrieved_chunks=[],
-                confidence_score=0.0
-            )
-
+        # ✅ REMOVED: The safety check that rejects all queries
+        # The RAG orchestrator will handle fallback to general knowledge automatically
+        
         # ✅ Rest of your existing code...
         # Map strategy string to enum
         strategy_map = {
@@ -251,6 +241,7 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
             logger.info(f"[QUERY] Querying document: {document.filename}")
 
         # ✅ Execute RAG query using YOUR orchestrator
+        # This will automatically fallback to general knowledge when no relevant documents found
         result = await rag_service.execute_query(
             query=request.query,
             top_k=request.top_k,
@@ -2030,3 +2021,39 @@ async def debug_chromadb_collection_info():
         
     except Exception as e:
         return {"error": f"Failed to get collection info: {str(e)}"}
+    
+
+@router.get("/debug/chromadb-contents")
+async def debug_chromadb_contents():
+    """Show EVERYTHING in ChromaDB"""
+    try:
+        from app.core.dependencies import get_vectorstore
+        
+        vector_store = get_vectorstore()
+        
+        # Get ALL documents
+        all_data = vector_store.collection.get()
+        
+        result = {
+            "total_chunks": len(all_data.get('documents', [])),
+            "all_sources": [],
+            "all_document_ids": []
+        }
+        
+        # List all sources and document IDs
+        if all_data.get('metadatas'):
+            for meta in all_data['metadatas']:
+                if meta:
+                    source = meta.get('source', 'unknown')
+                    doc_id = meta.get('document_id', 'unknown')
+                    
+                    if source not in result["all_sources"]:
+                        result["all_sources"].append(source)
+                    
+                    if doc_id not in result["all_document_ids"]:
+                        result["all_document_ids"].append(doc_id)
+        
+        return result
+        
+    except Exception as e:
+        return {"error": str(e)}
