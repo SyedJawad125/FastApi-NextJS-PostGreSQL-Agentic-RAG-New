@@ -1,313 +1,203 @@
-# from sentence_transformers import SentenceTransformer
-# import faiss
+# import os
+# from typing import Dict, List, Optional
+# import logging
 # import numpy as np
-# from typing import List
 
-# from app.core.config import settings
-
-# # Initialize embedding model
-# embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
-
-# # FAISS index
-# dimension = embedding_model.get_sentence_embedding_dimension()
-# index = faiss.IndexFlatL2(dimension)
-# documents: List[str] = []
-
-# def add_document_to_index(text: str):
-#     embeddings = embedding_model.encode([text])
-#     index.add(np.array(embeddings, dtype=np.float32))
-#     documents.append(text)
-
-# def search_similar_documents(query: str, k: int = 2):
-#     if len(documents) == 0:
-#         return []
-#     q_emb = embedding_model.encode([query])
-#     D, I = index.search(np.array(q_emb, dtype=np.float32), k=k)
-#     return [documents[i] for i in I[0]]
-
-
-# def get_count():
-#     """Get total number of documents in vector store"""
-#     return len(documents)
-
-# def clear():
-#     """Clear all documents and reset index"""
-#     global index, documents
-#     index.reset()
-#     documents.clear()
-
-
-
-
-# from sentence_transformers import SentenceTransformer
-# import faiss
-# import numpy as np
-# from typing import List
-# from app.core.config import settings
+# # Configure logging
+# logger = logging.getLogger(__name__)
 
 # class VectorStore:
+#     """Vector store for document embeddings and similarity search"""
+    
 #     def __init__(self):
-#         self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
-#         self.dimension = self.embedding_model.get_sentence_embedding_dimension()
-#         self.index = faiss.IndexFlatL2(self.dimension)
+#         """Initialize the vector store"""
 #         self.documents: List[str] = []
-#         self.metadata: List[dict] = []
+#         self.metadata: List[Dict] = []
+#         self.embeddings: List[List[float]] = []
+#         self.index = None
+        
+#         logger.info("[VECTOR_STORE] Initialized new VectorStore instance")
     
-#     def add_document(self, text: str, metadata: dict = None):
-#         """Add a document to the index"""
-#         embeddings = self.embedding_model.encode([text])
-#         self.index.add(np.array(embeddings, dtype=np.float32))
-#         self.documents.append(text)
-#         self.metadata.append(metadata or {})
+#     def get_count(self) -> int:
+#         """Return total number of documents in the vector store"""
+#         return len(self.documents)
     
-#     def search(self, query: str, k: int = 2):
-#         """Search for similar documents"""
-#         if len(self.documents) == 0:
+#     def add_document(
+#         self,
+#         text: str,
+#         metadata: Dict,
+#         embedding: Optional[List[float]] = None
+#     ) -> None:
+#         """
+#         Add a single document with its metadata and optional embedding
+        
+#         Args:
+#             text: The document text content
+#             metadata: Document metadata dictionary
+#             embedding: Optional pre-computed embedding vector
+#         """
+#         try:
+#             self.documents.append(text)
+#             self.metadata.append(metadata)
+            
+#             if embedding is not None:
+#                 self.embeddings.append(embedding)
+                
+#                 # Add to FAISS index if available
+#                 if self.index is not None:
+#                     self.index.add(np.array([embedding], dtype=np.float32))
+            
+#             logger.debug(f"[VECTOR_STORE] Added document, total count: {len(self.documents)}")
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Failed to add document: {str(e)}")
+#             raise
+    
+#     def get_documents_by_id(self, document_id: str) -> List[Dict]:
+#         """
+#         Retrieve all chunks for a specific document ID
+        
+#         Args:
+#             document_id: The document ID to search for
+            
+#         Returns:
+#             List of dictionaries containing document data
+#         """
+#         try:
+#             results = []
+#             for i, meta in enumerate(self.metadata):
+#                 if meta.get("document_id") == document_id:
+#                     results.append({
+#                         "index": i,
+#                         "metadata": meta,
+#                         "document": self.documents[i],
+#                         "content": self.documents[i]
+#                     })
+            
+#             logger.debug(f"[VECTOR_STORE] Found {len(results)} chunks for document_id: {document_id}")
+#             return results
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Failed to get documents by ID: {str(e)}")
 #             return []
-        
-#         q_emb = self.embedding_model.encode([query])
-#         D, I = self.index.search(np.array(q_emb, dtype=np.float32), k=k)
-        
-#         results = []
-#         for idx in I[0]:
-#             if idx < len(self.documents):
-#                 results.append({
-#                     "content": self.documents[idx],
-#                     "metadata": self.metadata[idx],
-#                     "score": float(D[0][len(results)])
-#                 })
-#         return results
     
-#     def get_count(self):
-#         """Get total number of documents"""
-#         # Return the actual FAISS index count, not just the documents list
-#         return self.index.ntotal
-    
-#     def clear(self):
-#         """Clear all documents and reset index"""
-#         # Reset FAISS index by removing all vectors
-#         self.index.reset()
+#     def _should_filter(self, idx: int, filter_dict: Dict) -> bool:
+#         """
+#         Check whether a document should be filtered out
         
-#         # Clear the documents and metadata lists
-#         self.documents.clear()
-#         self.metadata.clear()
-        
-#         count_after = self.get_count()
-#         print(f"✅ Vector store cleared. Count: {count_after}")
-        
-#         # Verify it's actually cleared
-#         if count_after != 0:
-#             raise Exception(f"Failed to clear vector store: {count_after} vectors remain")
-        
-#         return True
-
-# # Global singleton instance
-# _vector_store_instance = None
-
-# def get_vector_store():
-#     """Get or create the singleton vector store instance"""
-#     global _vector_store_instance
-#     if _vector_store_instance is None:
-#         _vector_store_instance = VectorStore()
-#     return _vector_store_instance
-
-# # Backward compatibility functions
-# def add_document_to_index(text: str, metadata: dict = None):
-#     return get_vector_store().add_document(text, metadata)
-
-# def search_similar_documents(query: str, k: int = 2):
-#     return get_vector_store().search(query, k)
-
-# def get_count():
-#     return get_vector_store().get_count()
-
-# def clear():
-#     return get_vector_store().clear()
-
-
-# from sentence_transformers import SentenceTransformer
-# import faiss
-# import numpy as np
-# from typing import List
-# from app.core.config import settings
-
-# class VectorStore:
-#     def __init__(self):
-#         self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
-#         self.dimension = self.embedding_model.get_sentence_embedding_dimension()
-#         self.index = faiss.IndexFlatL2(self.dimension)
-#         self.documents: List[str] = []
-#         self.metadata: List[dict] = []
-    
-#     def add_document(self, text: str, metadata: dict = None):
-#         """Add a document to the index"""
-#         embeddings = self.embedding_model.encode([text])
-#         self.index.add(np.array(embeddings, dtype=np.float32))
-#         self.documents.append(text)
-#         self.metadata.append(metadata or {})
-    
-#     def search(self, query: str, k: int = 2):
-#         """Search for similar documents"""
-#         if len(self.documents) == 0:
-#             return []
-        
-#         q_emb = self.embedding_model.encode([query])
-#         D, I = self.index.search(np.array(q_emb, dtype=np.float32), k=k)
-        
-#         results = []
-#         for idx in I[0]:
-#             if idx < len(self.documents):
-#                 results.append({
-#                     "content": self.documents[idx],
-#                     "metadata": self.metadata[idx],
-#                     "score": float(D[0][len(results)])
-#                 })
-#         return results
-    
-#     def get_count(self):
-#         """Get total number of documents"""
-#         # Return the actual FAISS index count, not just the documents list
-#         return self.index.ntotal
-    
-#     def clear(self):
-#         """Clear all documents and reset index"""
-#         # Reset FAISS index by removing all vectors
-#         self.index.reset()
-        
-#         # Clear the documents and metadata lists
-#         self.documents.clear()
-#         self.metadata.clear()
-        
-#         count_after = self.get_count()
-#         print(f"✅ Vector store cleared. Count: {count_after}")
-        
-#         # Verify it's actually cleared
-#         if count_after != 0:
-#             raise Exception(f"Failed to clear vector store: {count_after} vectors remain")
-        
-#         return True
-
-# # Global singleton instance
-# _vector_store_instance = None
-
-# def get_vector_store():
-#     """Get or create the singleton vector store instance"""
-#     global _vector_store_instance
-#     if _vector_store_instance is None:
-#         _vector_store_instance = VectorStore()
-#     return _vector_store_instance
-
-# def reset_vector_store():
-#     """Reset the singleton instance (forces creation of new vector store)"""
-#     global _vector_store_instance
-#     _vector_store_instance = None
-#     print("🔄 Vector store singleton reset")
-
-# # Backward compatibility functions
-# def add_document_to_index(text: str, metadata: dict = None):
-#     return get_vector_store().add_document(text, metadata)
-
-# def search_similar_documents(query: str, k: int = 2):
-#     return get_vector_store().search(query, k)
-
-# def get_count():
-#     return get_vector_store().get_count()
-
-# def clear():
-#     return get_vector_store().clear()
-
-
-
-
-
-
-
-# from sentence_transformers import SentenceTransformer
-# import faiss
-# import numpy as np
-# from typing import List, Dict, Optional
-# from app.core.config import settings
-
-# class VectorStore:
-#     def __init__(self):
-#         self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
-#         self.dimension = self.embedding_model.get_sentence_embedding_dimension()
-#         self.index = faiss.IndexFlatL2(self.dimension)
-#         self.documents: List[str] = []
-#         self.metadata: List[dict] = []
-#         self.document_ids: List[str] = []  # Track document IDs for filtering
-    
-#     def add_document(self, text: str, metadata: dict = None):
-#         """Add a document to the index"""
-#         embeddings = self.embedding_model.encode([text])
-#         self.index.add(np.array(embeddings, dtype=np.float32))
-#         self.documents.append(text)
-#         self.metadata.append(metadata or {})
-#         # Store document_id from metadata for filtering
-#         document_id = metadata.get('document_id') if metadata else None
-#         self.document_ids.append(document_id)
-    
-#     def search(self, query: str, k: int = 5, filter: Optional[Dict] = None):
-#         """Search for similar documents with optional filtering"""
-#         if len(self.documents) == 0:
-#             return []
-        
-#         q_emb = self.embedding_model.encode([query])
-#         D, I = self.index.search(np.array(q_emb, dtype=np.float32), k=min(k, len(self.documents)))
-        
-#         results = []
-#         for i, idx in enumerate(I[0]):
-#             if idx < len(self.documents):
-#                 # Apply filtering if specified
-#                 if filter and self._should_filter(idx, filter):
-#                     continue
-                    
-#                 results.append({
-#                     "document": self.documents[idx],
-#                     "content": self.documents[idx],  # For compatibility
-#                     "metadata": self.metadata[idx],
-#                     "score": float(1 - D[0][i]),  # Convert distance to similarity score
-#                     "distance": float(D[0][i])
-#                 })
-        
-#         return results
-    
-#     def _should_filter(self, idx: int, filter: Dict) -> bool:
-#         """Check if document should be filtered out based on criteria"""
-#         if not filter:
-#             return False
+#         Args:
+#             idx: Document index
+#             filter_dict: Filter criteria dictionary
             
-#         metadata = self.metadata[idx]
-        
-#         # Filter by document_id
-#         if 'document_id' in filter and metadata.get('document_id') != filter['document_id']:
-#             return True
-            
-#         # Filter by source/filename
-#         if 'source' in filter and metadata.get('source') != filter['source']:
-#             return True
-            
-#         # Filter by content_type
-#         if 'content_type' in filter and metadata.get('content_type') != filter['content_type']:
-#             return True
-            
+#         Returns:
+#             True if document should be filtered out, False otherwise
+#         """
+#         meta = self.metadata[idx]
+#         for key, value in filter_dict.items():
+#             if meta.get(key) != value:
+#                 return True
 #         return False
     
-#     def search_by_embedding(self, query_embedding: List[float], top_k: int = 5, filter: Optional[Dict] = None):
-#         """Search using pre-computed embedding with filtering"""
-#         if len(self.documents) == 0:
-#             return []
+#     def search_by_embedding(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int = 5,
+#         filter: Optional[Dict] = None
+#     ) -> List[Dict]:
+#         """
+#         Search using pre-computed embedding with optional filtering
         
-#         D, I = self.index.search(np.array([query_embedding], dtype=np.float32), 
-#                                 k=min(top_k, len(self.documents)))
+#         Args:
+#             query_embedding: Query vector embedding
+#             top_k: Number of results to return
+#             filter: Optional metadata filter dictionary
+            
+#         Returns:
+#             List of search results with documents, metadata, and scores
+#         """
+#         try:
+#             # Use environment variable for top_k if not specified
+#             if top_k is None:
+#                 top_k = int(os.getenv("TOP_K_RESULTS", "5"))
+            
+#             # Handle empty store
+#             if len(self.documents) == 0:
+#                 logger.warning("[VECTOR_STORE] Search called on empty vector store")
+#                 return []
+            
+#             # Simple cosine similarity search (for stores without FAISS)
+#             if self.index is None and len(self.embeddings) > 0:
+#                 return self._cosine_similarity_search(query_embedding, top_k, filter)
+            
+#             # FAISS-based search
+#             if self.index is not None:
+#                 return self._faiss_search(query_embedding, top_k, filter)
+            
+#             logger.warning("[VECTOR_STORE] No embeddings or index available for search")
+#             return []
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Search by embedding failed: {str(e)}")
+#             raise Exception(f"Search by embedding failed: {str(e)}")
+    
+#     def _cosine_similarity_search(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int,
+#         filter: Optional[Dict]
+#     ) -> List[Dict]:
+#         """Perform cosine similarity search without FAISS"""
+#         query_vec = np.array(query_embedding)
+#         similarities = []
+        
+#         for i, doc_embedding in enumerate(self.embeddings):
+#             # Apply filter if specified
+#             if filter and self._should_filter(i, filter):
+#                 continue
+            
+#             # Calculate cosine similarity
+#             doc_vec = np.array(doc_embedding)
+#             similarity = np.dot(query_vec, doc_vec) / (
+#                 np.linalg.norm(query_vec) * np.linalg.norm(doc_vec)
+#             )
+#             similarities.append((i, similarity))
+        
+#         # Sort by similarity (descending)
+#         similarities.sort(key=lambda x: x[1], reverse=True)
+        
+#         # Get top_k results
+#         results = []
+#         for idx, similarity in similarities[:top_k]:
+#             results.append({
+#                 "document": self.documents[idx],
+#                 "content": self.documents[idx],
+#                 "metadata": self.metadata[idx],
+#                 "score": float(similarity),
+#                 "distance": float(1 - similarity)
+#             })
+        
+#         return results
+    
+#     def _faiss_search(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int,
+#         filter: Optional[Dict]
+#     ) -> List[Dict]:
+#         """Perform FAISS-based similarity search"""
+#         # Perform similarity search on the FAISS index
+#         D, I = self.index.search(
+#             np.array([query_embedding], dtype=np.float32),
+#             k=min(top_k * 2, len(self.documents))  # Get extra for filtering
+#         )
         
 #         results = []
 #         for i, idx in enumerate(I[0]):
 #             if idx < len(self.documents):
-#                 # Apply filtering if specified
+#                 # Apply filter if specified
 #                 if filter and self._should_filter(idx, filter):
 #                     continue
-                    
+                
 #                 results.append({
 #                     "document": self.documents[idx],
 #                     "content": self.documents[idx],
@@ -315,68 +205,745 @@
 #                     "score": float(1 - D[0][i]),  # Convert distance to similarity
 #                     "distance": float(D[0][i])
 #                 })
+                
+#                 # Stop when we have enough results
+#                 if len(results) >= top_k:
+#                     break
         
 #         return results
     
-#     def get_count(self):
-#         """Get total number of documents"""
-#         return self.index.ntotal
-    
-#     def get_documents_by_id(self, document_id: str) -> List[Dict]:
-#         """Get all documents for a specific document_id"""
-#         results = []
-#         for i, metadata in enumerate(self.metadata):
-#             if metadata.get('document_id') == document_id:
-#                 results.append({
-#                     "document": self.documents[i],
-#                     "metadata": metadata,
-#                     "index": i
-#                 })
-#         return results
-    
-#     def clear(self):
-#         """Clear all documents and reset index"""
-#         self.index.reset()
+#     def clear(self) -> None:
+#         """Clear all documents from the vector store"""
 #         self.documents.clear()
 #         self.metadata.clear()
-#         self.document_ids.clear()
+#         self.embeddings.clear()
+#         self.index = None
+#         logger.info("[VECTOR_STORE] Cleared all documents")
+    
+#     def remove_document(self, document_id: str) -> int:
+#         """
+#         Remove all chunks for a specific document ID
         
-#         count_after = self.get_count()
-#         print(f"Vector store cleared. Count: {count_after}")
+#         Args:
+#             document_id: The document ID to remove
+            
+#         Returns:
+#             Number of chunks removed
+#         """
+#         indices_to_remove = []
         
-#         if count_after != 0:
-#             raise Exception(f"Failed to clear vector store: {count_after} vectors remain")
+#         for i, meta in enumerate(self.metadata):
+#             if meta.get("document_id") == document_id:
+#                 indices_to_remove.append(i)
         
-#         return True
+#         # Remove in reverse order to maintain indices
+#         for i in sorted(indices_to_remove, reverse=True):
+#             del self.documents[i]
+#             del self.metadata[i]
+#             if i < len(self.embeddings):
+#                 del self.embeddings[i]
+        
+#         # Note: FAISS index would need to be rebuilt after removal
+#         if indices_to_remove and self.index is not None:
+#             logger.warning("[VECTOR_STORE] FAISS index needs rebuilding after document removal")
+#             self.index = None
+        
+#         logger.info(f"[VECTOR_STORE] Removed {len(indices_to_remove)} chunks for document_id: {document_id}")
+#         return len(indices_to_remove)
 
-# # Global singleton instance
+
+# # Singleton instance
 # _vector_store_instance = None
 
-# def get_vector_store():
-#     """Get or create the singleton vector store instance"""
+# def get_vector_store() -> VectorStore:
+#     """
+#     Get or create the vector store singleton instance
+    
+#     Returns:
+#         VectorStore instance
+#     """
 #     global _vector_store_instance
 #     if _vector_store_instance is None:
 #         _vector_store_instance = VectorStore()
+#         logger.info("[VECTOR_STORE] Created new singleton instance")
 #     return _vector_store_instance
 
-# def reset_vector_store():
-#     """Reset the singleton instance (forces creation of new vector store)"""
+# def reset_vector_store() -> None:
+#     """Reset the vector store singleton (useful for testing)"""
 #     global _vector_store_instance
 #     _vector_store_instance = None
-#     print("Vector store singleton reset")
+#     logger.info("[VECTOR_STORE] Reset singleton instance")
 
-# # Backward compatibility functions
-# def add_document_to_index(text: str, metadata: dict = None):
-#     return get_vector_store().add_document(text, metadata)
 
-# def search_similar_documents(query: str, k: int = 5, filter: Optional[Dict] = None):
-#     return get_vector_store().search(query, k, filter)
 
-# def get_count():
-#     return get_vector_store().get_count()
 
-# def clear():
-#     return get_vector_store().clear()
+
+
+
+
+
+
+# import os
+# from typing import Dict, List, Optional
+# import logging
+# import numpy as np
+
+# # Configure logging
+# logger = logging.getLogger(__name__)
+
+# class VectorStore:
+#     """Vector store for document embeddings and similarity search"""
+    
+#     def __init__(self):
+#         """Initialize the vector store"""
+#         self._reset_storage()
+#         logger.info("[VECTOR_STORE] Initialized new VectorStore instance")
+    
+#     def _reset_storage(self):
+#         """Internal method to reset all storage"""
+#         self.documents: List[str] = []
+#         self.metadata: List[Dict] = []
+#         self.embeddings: List[List[float]] = []
+#         self.index = None
+    
+#     def get_count(self) -> int:
+#         """Return total number of documents in the vector store"""
+#         return len(self.documents)
+    
+#     def add_document(
+#         self,
+#         text: str,
+#         metadata: Dict,
+#         embedding: Optional[List[float]] = None
+#     ) -> None:
+#         """
+#         Add a single document with its metadata and optional embedding
+        
+#         Args:
+#             text: The document text content
+#             metadata: Document metadata dictionary
+#             embedding: Optional pre-computed embedding vector
+#         """
+#         try:
+#             self.documents.append(text)
+#             self.metadata.append(metadata)
+            
+#             if embedding is not None:
+#                 self.embeddings.append(embedding)
+                
+#                 # Add to FAISS index if available
+#                 if self.index is not None:
+#                     self.index.add(np.array([embedding], dtype=np.float32))
+            
+#             logger.debug(f"[VECTOR_STORE] Added document, total count: {len(self.documents)}")
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Failed to add document: {str(e)}")
+#             raise
+    
+#     def get_documents_by_id(self, document_id: str) -> List[Dict]:
+#         """
+#         Retrieve all chunks for a specific document ID
+        
+#         Args:
+#             document_id: The document ID to search for
+            
+#         Returns:
+#             List of dictionaries containing document data
+#         """
+#         try:
+#             results = []
+#             for i, meta in enumerate(self.metadata):
+#                 if meta.get("document_id") == document_id:
+#                     results.append({
+#                         "index": i,
+#                         "metadata": meta,
+#                         "document": self.documents[i],
+#                         "content": self.documents[i]
+#                     })
+            
+#             logger.debug(f"[VECTOR_STORE] Found {len(results)} chunks for document_id: {document_id}")
+#             return results
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Failed to get documents by ID: {str(e)}")
+#             return []
+    
+#     def _should_filter(self, idx: int, filter_dict: Dict) -> bool:
+#         """
+#         Check whether a document should be filtered out
+        
+#         Args:
+#             idx: Document index
+#             filter_dict: Filter criteria dictionary
+            
+#         Returns:
+#             True if document should be filtered out, False otherwise
+#         """
+#         meta = self.metadata[idx]
+#         for key, value in filter_dict.items():
+#             if meta.get(key) != value:
+#                 return True
+#         return False
+    
+#     def search_by_embedding(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int = 5,
+#         filter: Optional[Dict] = None
+#     ) -> List[Dict]:
+#         """
+#         Search using pre-computed embedding with optional filtering
+        
+#         Args:
+#             query_embedding: Query vector embedding
+#             top_k: Number of results to return
+#             filter: Optional metadata filter dictionary
+            
+#         Returns:
+#             List of search results with documents, metadata, and scores
+#         """
+#         try:
+#             # Use environment variable for top_k if not specified
+#             if top_k is None:
+#                 top_k = int(os.getenv("TOP_K_RESULTS", "5"))
+            
+#             # Handle empty store
+#             if len(self.documents) == 0:
+#                 logger.warning("[VECTOR_STORE] Search called on empty vector store")
+#                 return []
+            
+#             # Simple cosine similarity search (for stores without FAISS)
+#             if self.index is None and len(self.embeddings) > 0:
+#                 return self._cosine_similarity_search(query_embedding, top_k, filter)
+            
+#             # FAISS-based search
+#             if self.index is not None:
+#                 return self._faiss_search(query_embedding, top_k, filter)
+            
+#             logger.warning("[VECTOR_STORE] No embeddings or index available for search")
+#             return []
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Search by embedding failed: {str(e)}")
+#             raise Exception(f"Search by embedding failed: {str(e)}")
+    
+#     def _cosine_similarity_search(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int,
+#         filter: Optional[Dict]
+#     ) -> List[Dict]:
+#         """Perform cosine similarity search without FAISS"""
+#         query_vec = np.array(query_embedding)
+#         similarities = []
+        
+#         for i, doc_embedding in enumerate(self.embeddings):
+#             # Apply filter if specified
+#             if filter and self._should_filter(i, filter):
+#                 continue
+            
+#             # Calculate cosine similarity
+#             doc_vec = np.array(doc_embedding)
+#             similarity = np.dot(query_vec, doc_vec) / (
+#                 np.linalg.norm(query_vec) * np.linalg.norm(doc_vec)
+#             )
+#             similarities.append((i, similarity))
+        
+#         # Sort by similarity (descending)
+#         similarities.sort(key=lambda x: x[1], reverse=True)
+        
+#         # Get top_k results
+#         results = []
+#         for idx, similarity in similarities[:top_k]:
+#             results.append({
+#                 "document": self.documents[idx],
+#                 "content": self.documents[idx],
+#                 "metadata": self.metadata[idx],
+#                 "score": float(similarity),
+#                 "distance": float(1 - similarity)
+#             })
+        
+#         return results
+    
+#     def _faiss_search(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int,
+#         filter: Optional[Dict]
+#     ) -> List[Dict]:
+#         """Perform FAISS-based similarity search"""
+#         # Perform similarity search on the FAISS index
+#         D, I = self.index.search(
+#             np.array([query_embedding], dtype=np.float32),
+#             k=min(top_k * 2, len(self.documents))  # Get extra for filtering
+#         )
+        
+#         results = []
+#         for i, idx in enumerate(I[0]):
+#             if idx < len(self.documents):
+#                 # Apply filter if specified
+#                 if filter and self._should_filter(idx, filter):
+#                     continue
+                
+#                 results.append({
+#                     "document": self.documents[idx],
+#                     "content": self.documents[idx],
+#                     "metadata": self.metadata[idx],
+#                     "score": float(1 - D[0][i]),  # Convert distance to similarity
+#                     "distance": float(D[0][i])
+#                 })
+                
+#                 # Stop when we have enough results
+#                 if len(results) >= top_k:
+#                     break
+        
+#         return results
+    
+#     def clear(self) -> None:
+#         """Clear all documents from the vector store"""
+#         count_before = self.get_count()
+        
+#         # Explicitly delete references and recreate lists
+#         del self.documents
+#         del self.metadata
+#         del self.embeddings
+        
+#         # Recreate storage
+#         self._reset_storage()
+        
+#         count_after = self.get_count()
+#         logger.info(f"[VECTOR_STORE] Cleared all documents: {count_before} -> {count_after}")
+        
+#         # Verify it's actually empty
+#         if count_after != 0:
+#             logger.error(f"[VECTOR_STORE] WARNING: Clear failed! Still has {count_after} items")
+#             raise Exception(f"Vector store clear failed: {count_after} items remain")
+    
+#     def remove_document(self, document_id: str) -> int:
+#         """
+#         Remove all chunks for a specific document ID
+        
+#         Args:
+#             document_id: The document ID to remove
+            
+#         Returns:
+#             Number of chunks removed
+#         """
+#         indices_to_remove = []
+        
+#         for i, meta in enumerate(self.metadata):
+#             if meta.get("document_id") == document_id:
+#                 indices_to_remove.append(i)
+        
+#         # Remove in reverse order to maintain indices
+#         for i in sorted(indices_to_remove, reverse=True):
+#             del self.documents[i]
+#             del self.metadata[i]
+#             if i < len(self.embeddings):
+#                 del self.embeddings[i]
+        
+#         # Note: FAISS index would need to be rebuilt after removal
+#         if indices_to_remove and self.index is not None:
+#             logger.warning("[VECTOR_STORE] FAISS index needs rebuilding after document removal")
+#             self.index = None
+        
+#         logger.info(f"[VECTOR_STORE] Removed {len(indices_to_remove)} chunks for document_id: {document_id}")
+#         return len(indices_to_remove)
+
+
+# # Singleton instance
+# _vector_store_instance = None
+
+# def get_vector_store() -> VectorStore:
+#     """
+#     Get or create the vector store singleton instance
+    
+#     Returns:
+#         VectorStore instance
+#     """
+#     global _vector_store_instance
+#     if _vector_store_instance is None:
+#         _vector_store_instance = VectorStore()
+#         logger.info("[VECTOR_STORE] Created new singleton instance")
+#     return _vector_store_instance
+
+# def reset_vector_store() -> None:
+#     """Reset the vector store singleton (useful for testing)"""
+#     global _vector_store_instance
+    
+#     # Clear the existing instance if it exists
+#     if _vector_store_instance is not None:
+#         try:
+#             _vector_store_instance.clear()
+#         except Exception as e:
+#             logger.warning(f"[VECTOR_STORE] Error clearing instance before reset: {e}")
+    
+#     # Delete the reference
+#     _vector_store_instance = None
+#     logger.info("[VECTOR_STORE] Reset singleton instance")
+
+
+
+
+# import os
+# from typing import Dict, List, Optional
+# import logging
+# import numpy as np
+# import gc  # Garbage collector
+
+# # Configure logging
+# logger = logging.getLogger(__name__)
+
+# class VectorStore:
+#     """Vector store for document embeddings and similarity search"""
+    
+#     def __init__(self):
+#         """Initialize the vector store"""
+#         self.documents: List[str] = []
+#         self.metadata: List[Dict] = []
+#         self.embeddings: List[List[float]] = []
+#         self.index = None
+#         self._is_cleared = False
+#         logger.info("[VECTOR_STORE] Initialized new VectorStore instance")
+    
+#     def get_count(self) -> int:
+#         """Return total number of documents in the vector store"""
+#         if self._is_cleared:
+#             return 0
+#         return len(self.documents)
+    
+#     def add_document(
+#         self,
+#         text: str,
+#         metadata: Dict,
+#         embedding: Optional[List[float]] = None
+#     ) -> None:
+#         """
+#         Add a single document with its metadata and optional embedding
+        
+#         Args:
+#             text: The document text content
+#             metadata: Document metadata dictionary
+#             embedding: Optional pre-computed embedding vector
+#         """
+#         try:
+#             # Reset cleared flag when adding new documents
+#             self._is_cleared = False
+            
+#             self.documents.append(text)
+#             self.metadata.append(metadata)
+            
+#             if embedding is not None:
+#                 self.embeddings.append(embedding)
+                
+#                 # Add to FAISS index if available
+#                 if self.index is not None:
+#                     self.index.add(np.array([embedding], dtype=np.float32))
+            
+#             logger.debug(f"[VECTOR_STORE] Added document, total count: {len(self.documents)}")
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Failed to add document: {str(e)}")
+#             raise
+    
+#     def get_documents_by_id(self, document_id: str) -> List[Dict]:
+#         """
+#         Retrieve all chunks for a specific document ID
+        
+#         Args:
+#             document_id: The document ID to search for
+            
+#         Returns:
+#             List of dictionaries containing document data
+#         """
+#         if self._is_cleared:
+#             logger.debug("[VECTOR_STORE] Store is cleared, returning empty list")
+#             return []
+            
+#         try:
+#             results = []
+#             for i, meta in enumerate(self.metadata):
+#                 if meta.get("document_id") == document_id:
+#                     results.append({
+#                         "index": i,
+#                         "metadata": meta,
+#                         "document": self.documents[i],
+#                         "content": self.documents[i]
+#                     })
+            
+#             logger.debug(f"[VECTOR_STORE] Found {len(results)} chunks for document_id: {document_id}")
+#             return results
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Failed to get documents by ID: {str(e)}")
+#             return []
+    
+#     def _should_filter(self, idx: int, filter_dict: Dict) -> bool:
+#         """
+#         Check whether a document should be filtered out
+        
+#         Args:
+#             idx: Document index
+#             filter_dict: Filter criteria dictionary
+            
+#         Returns:
+#             True if document should be filtered out, False otherwise
+#         """
+#         meta = self.metadata[idx]
+#         for key, value in filter_dict.items():
+#             if meta.get(key) != value:
+#                 return True
+#         return False
+    
+#     def search_by_embedding(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int = 5,
+#         filter: Optional[Dict] = None
+#     ) -> List[Dict]:
+#         """
+#         Search using pre-computed embedding with optional filtering
+        
+#         Args:
+#             query_embedding: Query vector embedding
+#             top_k: Number of results to return
+#             filter: Optional metadata filter dictionary
+            
+#         Returns:
+#             List of search results with documents, metadata, and scores
+#         """
+#         # Check if store is cleared
+#         if self._is_cleared or len(self.documents) == 0:
+#             logger.warning("[VECTOR_STORE] Search called on cleared/empty vector store")
+#             return []
+            
+#         try:
+#             # Use environment variable for top_k if not specified
+#             if top_k is None:
+#                 top_k = int(os.getenv("TOP_K_RESULTS", "5"))
+            
+#             # Simple cosine similarity search (for stores without FAISS)
+#             if self.index is None and len(self.embeddings) > 0:
+#                 return self._cosine_similarity_search(query_embedding, top_k, filter)
+            
+#             # FAISS-based search
+#             if self.index is not None:
+#                 return self._faiss_search(query_embedding, top_k, filter)
+            
+#             logger.warning("[VECTOR_STORE] No embeddings or index available for search")
+#             return []
+            
+#         except Exception as e:
+#             logger.error(f"[VECTOR_STORE] Search by embedding failed: {str(e)}")
+#             raise Exception(f"Search by embedding failed: {str(e)}")
+    
+#     def _cosine_similarity_search(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int,
+#         filter: Optional[Dict]
+#     ) -> List[Dict]:
+#         """Perform cosine similarity search without FAISS"""
+#         if self._is_cleared:
+#             return []
+            
+#         query_vec = np.array(query_embedding)
+#         similarities = []
+        
+#         for i, doc_embedding in enumerate(self.embeddings):
+#             # Apply filter if specified
+#             if filter and self._should_filter(i, filter):
+#                 continue
+            
+#             # Calculate cosine similarity
+#             doc_vec = np.array(doc_embedding)
+#             similarity = np.dot(query_vec, doc_vec) / (
+#                 np.linalg.norm(query_vec) * np.linalg.norm(doc_vec)
+#             )
+#             similarities.append((i, similarity))
+        
+#         # Sort by similarity (descending)
+#         similarities.sort(key=lambda x: x[1], reverse=True)
+        
+#         # Get top_k results
+#         results = []
+#         for idx, similarity in similarities[:top_k]:
+#             results.append({
+#                 "document": self.documents[idx],
+#                 "content": self.documents[idx],
+#                 "metadata": self.metadata[idx],
+#                 "score": float(similarity),
+#                 "distance": float(1 - similarity)
+#             })
+        
+#         return results
+    
+#     def _faiss_search(
+#         self,
+#         query_embedding: List[float],
+#         top_k: int,
+#         filter: Optional[Dict]
+#     ) -> List[Dict]:
+#         """Perform FAISS-based similarity search"""
+#         if self._is_cleared:
+#             return []
+            
+#         # Perform similarity search on the FAISS index
+#         D, I = self.index.search(
+#             np.array([query_embedding], dtype=np.float32),
+#             k=min(top_k * 2, len(self.documents))  # Get extra for filtering
+#         )
+        
+#         results = []
+#         for i, idx in enumerate(I[0]):
+#             if idx < len(self.documents):
+#                 # Apply filter if specified
+#                 if filter and self._should_filter(idx, filter):
+#                     continue
+                
+#                 results.append({
+#                     "document": self.documents[idx],
+#                     "content": self.documents[idx],
+#                     "metadata": self.metadata[idx],
+#                     "score": float(1 - D[0][i]),  # Convert distance to similarity
+#                     "distance": float(D[0][i])
+#                 })
+                
+#                 # Stop when we have enough results
+#                 if len(results) >= top_k:
+#                     break
+        
+#         return results
+    
+#     def clear(self) -> None:
+#         """Clear all documents from the vector store"""
+#         count_before = len(self.documents)
+        
+#         logger.info(f"[VECTOR_STORE] Clearing {count_before} documents...")
+        
+#         # Mark as cleared FIRST
+#         self._is_cleared = True
+        
+#         # Clear all data structures
+#         self.documents.clear()
+#         self.metadata.clear()
+#         self.embeddings.clear()
+#         self.index = None
+        
+#         # Force garbage collection
+#         gc.collect()
+        
+#         count_after = len(self.documents)
+#         logger.info(f"[VECTOR_STORE] Cleared: {count_before} -> {count_after}, _is_cleared={self._is_cleared}")
+        
+#         if count_after != 0:
+#             logger.error(f"[VECTOR_STORE] ERROR: Clear failed! Still has {count_after} items")
+#             raise Exception(f"Vector store clear failed: {count_after} items remain")
+    
+#     def remove_document(self, document_id: str) -> int:
+#         """
+#         Remove all chunks for a specific document ID
+        
+#         Args:
+#             document_id: The document ID to remove
+            
+#         Returns:
+#             Number of chunks removed
+#         """
+#         if self._is_cleared:
+#             return 0
+            
+#         indices_to_remove = []
+        
+#         for i, meta in enumerate(self.metadata):
+#             if meta.get("document_id") == document_id:
+#                 indices_to_remove.append(i)
+        
+#         # Remove in reverse order to maintain indices
+#         for i in sorted(indices_to_remove, reverse=True):
+#             del self.documents[i]
+#             del self.metadata[i]
+#             if i < len(self.embeddings):
+#                 del self.embeddings[i]
+        
+#         # Note: FAISS index would need to be rebuilt after removal
+#         if indices_to_remove and self.index is not None:
+#             logger.warning("[VECTOR_STORE] FAISS index needs rebuilding after document removal")
+#             self.index = None
+        
+#         logger.info(f"[VECTOR_STORE] Removed {len(indices_to_remove)} chunks for document_id: {document_id}")
+#         return len(indices_to_remove)
+
+
+# # Singleton instance
+# _vector_store_instance = None
+
+# def get_vector_store() -> VectorStore:
+#     """
+#     Get or create the vector store singleton instance
+    
+#     Returns:
+#         VectorStore instance
+#     """
+#     global _vector_store_instance
+#     if _vector_store_instance is None:
+#         _vector_store_instance = VectorStore()
+#         logger.info("[VECTOR_STORE] Created new singleton instance")
+#     else:
+#         # Log current state for debugging
+#         count = _vector_store_instance.get_count()
+#         is_cleared = _vector_store_instance._is_cleared
+#         logger.debug(f"[VECTOR_STORE] Returning existing instance: count={count}, cleared={is_cleared}")
+    
+#     return _vector_store_instance
+
+# def reset_vector_store() -> None:
+#     """Reset the vector store singleton (useful for testing)"""
+#     global _vector_store_instance
+    
+#     logger.info("[VECTOR_STORE] Resetting singleton...")
+    
+#     # Clear the existing instance if it exists
+#     if _vector_store_instance is not None:
+#         try:
+#             _vector_store_instance.clear()
+#             logger.info("[VECTOR_STORE] Cleared existing instance")
+#         except Exception as e:
+#             logger.warning(f"[VECTOR_STORE] Error clearing instance before reset: {e}")
+    
+#     # Force delete the instance
+#     old_instance_id = id(_vector_store_instance) if _vector_store_instance else None
+#     _vector_store_instance = None
+    
+#     # Force garbage collection
+#     gc.collect()
+    
+#     logger.info(f"[VECTOR_STORE] Reset complete. Old instance ID: {old_instance_id}")
+    
+# def force_new_vector_store() -> VectorStore:
+#     """Force create a completely new vector store instance (for testing)"""
+#     global _vector_store_instance
+    
+#     logger.warning("[VECTOR_STORE] FORCE creating new instance!")
+    
+#     # Delete old instance
+#     if _vector_store_instance is not None:
+#         try:
+#             _vector_store_instance.clear()
+#         except:
+#             pass
+    
+#     _vector_store_instance = None
+#     gc.collect()
+    
+#     # Create new instance
+#     _vector_store_instance = VectorStore()
+#     logger.info(f"[VECTOR_STORE] Force created new instance: ID={id(_vector_store_instance)}")
+    
+#     return _vector_store_instance
+
+
 
 
 
@@ -386,69 +953,220 @@
 
 import os
 from typing import Dict, List, Optional
-from fastapi import logger
+import logging
 import numpy as np
+import gc  # Garbage collector
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class VectorStore:
+    """Vector store for document embeddings and similarity search"""
+    
     def __init__(self):
-        # Store documents and metadata
+        """Initialize the vector store"""
         self.documents: List[str] = []
         self.metadata: List[Dict] = []
-        self.index = None  # FAISS or any other vector index
-
+        self.embeddings: List[List[float]] = []
+        self.index = None
+        self._is_cleared = False
+        logger.info("[VECTOR_STORE] Initialized new VectorStore instance")
+    
     def get_count(self) -> int:
         """Return total number of documents in the vector store"""
+        if self._is_cleared:
+            return 0
         return len(self.documents)
-
-    def add_document(self, document: str, metadata: Dict, embedding: List[float]):
-        """Add a single document and its metadata"""
-        self.documents.append(document)
-        self.metadata.append(metadata)
-        # Add to FAISS index or whichever index you're using
-        if self.index is not None:
-            self.index.add(np.array([embedding], dtype=np.float32))
-
+    
+    def add_document(
+        self,
+        text: str,
+        metadata: Dict,
+        embedding: Optional[List[float]] = None
+    ) -> None:
+        """
+        Add a single document with its metadata and optional embedding
+        
+        Args:
+            text: The document text content
+            metadata: Document metadata dictionary
+            embedding: Optional pre-computed embedding vector
+        """
+        try:
+            # Reset cleared flag when adding new documents
+            self._is_cleared = False
+            
+            self.documents.append(text)
+            self.metadata.append(metadata)
+            
+            if embedding is not None:
+                self.embeddings.append(embedding)
+                
+                # Add to FAISS index if available
+                if self.index is not None:
+                    self.index.add(np.array([embedding], dtype=np.float32))
+            
+            logger.debug(f"[VECTOR_STORE] Added document, total count: {len(self.documents)}")
+            
+        except Exception as e:
+            logger.error(f"[VECTOR_STORE] Failed to add document: {str(e)}")
+            raise
+    
     def get_documents_by_id(self, document_id: str) -> List[Dict]:
-        """Retrieve all chunks for a specific document ID"""
-        results = []
-        for i, meta in enumerate(self.metadata):
-            if meta.get("document_id") == document_id:
-                results.append({
-                    "index": i,
-                    "metadata": meta,
-                    "document": self.documents[i]
-                })
-        return results
-
-    def _should_filter(self, idx: int, filter: Dict) -> bool:
-        """Helper: check whether the document should be filtered out"""
+        """
+        Retrieve all chunks for a specific document ID
+        
+        Args:
+            document_id: The document ID to search for
+            
+        Returns:
+            List of dictionaries containing document data
+        """
+        if self._is_cleared:
+            logger.debug("[VECTOR_STORE] Store is cleared, returning empty list")
+            return []
+            
+        try:
+            results = []
+            for i, meta in enumerate(self.metadata):
+                if meta.get("document_id") == document_id:
+                    results.append({
+                        "index": i,
+                        "metadata": meta,
+                        "document": self.documents[i],
+                        "content": self.documents[i]
+                    })
+            
+            logger.debug(f"[VECTOR_STORE] Found {len(results)} chunks for document_id: {document_id}")
+            return results
+            
+        except Exception as e:
+            logger.error(f"[VECTOR_STORE] Failed to get documents by ID: {str(e)}")
+            return []
+    
+    def _should_filter(self, idx: int, filter_dict: Dict) -> bool:
+        """
+        Check whether a document should be filtered out
+        
+        Args:
+            idx: Document index
+            filter_dict: Filter criteria dictionary
+            
+        Returns:
+            True if document should be filtered out, False otherwise
+        """
         meta = self.metadata[idx]
-        for key, value in filter.items():
+        for key, value in filter_dict.items():
             if meta.get(key) != value:
                 return True
         return False
-
+    
     def search_by_embedding(
         self,
         query_embedding: List[float],
         top_k: int = 5,
         filter: Optional[Dict] = None
     ) -> List[Dict]:
-        """Search using pre-computed embedding with optional filtering"""
-        if len(self.documents) == 0 or self.index is None:
+        """
+        Search using pre-computed embedding with optional filtering
+        
+        Args:
+            query_embedding: Query vector embedding
+            top_k: Number of results to return
+            filter: Optional metadata filter dictionary
+            
+        Returns:
+            List of search results with documents, metadata, and scores
+        """
+        # Check if store is cleared
+        if self._is_cleared or len(self.documents) == 0:
+            logger.warning("[VECTOR_STORE] Search called on cleared/empty vector store")
             return []
-
-        # Perform similarity search on the index
+            
+        try:
+            # Use environment variable for top_k if not specified
+            if top_k is None:
+                top_k = int(os.getenv("TOP_K_RESULTS", "5"))
+            
+            # Simple cosine similarity search (for stores without FAISS)
+            if self.index is None and len(self.embeddings) > 0:
+                return self._cosine_similarity_search(query_embedding, top_k, filter)
+            
+            # FAISS-based search
+            if self.index is not None:
+                return self._faiss_search(query_embedding, top_k, filter)
+            
+            logger.warning("[VECTOR_STORE] No embeddings or index available for search")
+            return []
+            
+        except Exception as e:
+            logger.error(f"[VECTOR_STORE] Search by embedding failed: {str(e)}")
+            raise Exception(f"Search by embedding failed: {str(e)}")
+    
+    def _cosine_similarity_search(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+        filter: Optional[Dict]
+    ) -> List[Dict]:
+        """Perform cosine similarity search without FAISS"""
+        if self._is_cleared:
+            return []
+            
+        query_vec = np.array(query_embedding)
+        similarities = []
+        
+        for i, doc_embedding in enumerate(self.embeddings):
+            # Apply filter if specified
+            if filter and self._should_filter(i, filter):
+                continue
+            
+            # Calculate cosine similarity
+            doc_vec = np.array(doc_embedding)
+            similarity = np.dot(query_vec, doc_vec) / (
+                np.linalg.norm(query_vec) * np.linalg.norm(doc_vec)
+            )
+            similarities.append((i, similarity))
+        
+        # Sort by similarity (descending)
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        
+        # Get top_k results
+        results = []
+        for idx, similarity in similarities[:top_k]:
+            results.append({
+                "document": self.documents[idx],
+                "content": self.documents[idx],
+                "metadata": self.metadata[idx],
+                "score": float(similarity),
+                "distance": float(1 - similarity)
+            })
+        
+        return results
+    
+    def _faiss_search(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+        filter: Optional[Dict]
+    ) -> List[Dict]:
+        """Perform FAISS-based similarity search"""
+        if self._is_cleared:
+            return []
+            
+        # Perform similarity search on the FAISS index
         D, I = self.index.search(
             np.array([query_embedding], dtype=np.float32),
-            k=min(top_k, len(self.documents))
+            k=min(top_k * 2, len(self.documents))  # Get extra for filtering
         )
-
+        
         results = []
         for i, idx in enumerate(I[0]):
             if idx < len(self.documents):
+                # Apply filter if specified
                 if filter and self._should_filter(idx, filter):
                     continue
+                
                 results.append({
                     "document": self.documents[idx],
                     "content": self.documents[idx],
@@ -456,68 +1174,136 @@ class VectorStore:
                     "score": float(1 - D[0][i]),  # Convert distance to similarity
                     "distance": float(D[0][i])
                 })
+                
+                # Stop when we have enough results
+                if len(results) >= top_k:
+                    break
+        
         return results
-
-
-
-    def search_by_embedding(
-        self,
-        query_embedding: List[float],
-        top_k: int = 5,
-        filter: Optional[Dict] = None
-    ) -> List[Dict]:
-        """Search using pre-computed embedding with optional filtering"""
-        try:
-            top_k = top_k or int(os.getenv("TOP_K_RESULTS", "5"))
-            
-            # Build where clause for filtering
-            where_clause = None
-            if filter:
-                where_clause = {}
-                for key, value in filter.items():
-                    where_clause[key] = value
-            
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                where=where_clause
-            )
-            
-            # Format results to match the expected format
-            formatted_results = []
-            for i in range(len(results["documents"][0])):
-                formatted_results.append({
-                    "document": results["documents"][0][i],
-                    "content": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i] if results["metadatas"] and results["metadatas"][0] else {},
-                    "score": 1.0 - results["distances"][0][i],  # Convert distance to similarity
-                    "distance": results["distances"][0][i]
-                })
-            
-            return formatted_results
-            
-        except Exception as e:
-            logger.error(f"Search by embedding failed: {str(e)}")
-            raise Exception(f"Search by embedding failed: {str(e)}")
     
-    def get_documents_by_id(self, document_id: str) -> List[Dict]:
-        """Retrieve all chunks for a specific document ID"""
+    def clear(self) -> None:
+        """Clear all documents from the vector store"""
+        count_before = len(self.documents)
+        
+        logger.info(f"[VECTOR_STORE] Clearing {count_before} documents...")
+        
+        # Mark as cleared FIRST
+        self._is_cleared = True
+        
+        # Clear all data structures
+        self.documents.clear()
+        self.metadata.clear()
+        self.embeddings.clear()
+        self.index = None
+        
+        # Force garbage collection
+        gc.collect()
+        
+        count_after = len(self.documents)
+        logger.info(f"[VECTOR_STORE] Cleared: {count_before} -> {count_after}, _is_cleared={self._is_cleared}")
+        
+        if count_after != 0:
+            logger.error(f"[VECTOR_STORE] ERROR: Clear failed! Still has {count_after} items")
+            raise Exception(f"Vector store clear failed: {count_after} items remain")
+    
+    def remove_document(self, document_id: str) -> int:
+        """
+        Remove all chunks for a specific document ID
+        
+        Args:
+            document_id: The document ID to remove
+            
+        Returns:
+            Number of chunks removed
+        """
+        if self._is_cleared:
+            return 0
+            
+        indices_to_remove = []
+        
+        for i, meta in enumerate(self.metadata):
+            if meta.get("document_id") == document_id:
+                indices_to_remove.append(i)
+        
+        # Remove in reverse order to maintain indices
+        for i in sorted(indices_to_remove, reverse=True):
+            del self.documents[i]
+            del self.metadata[i]
+            if i < len(self.embeddings):
+                del self.embeddings[i]
+        
+        # Note: FAISS index would need to be rebuilt after removal
+        if indices_to_remove and self.index is not None:
+            logger.warning("[VECTOR_STORE] FAISS index needs rebuilding after document removal")
+            self.index = None
+        
+        logger.info(f"[VECTOR_STORE] Removed {len(indices_to_remove)} chunks for document_id: {document_id}")
+        return len(indices_to_remove)
+
+
+# Singleton instance
+_vector_store_instance = None
+
+def get_vector_store() -> VectorStore:
+    """
+    Get or create the vector store singleton instance
+    
+    Returns:
+        VectorStore instance
+    """
+    global _vector_store_instance
+    if _vector_store_instance is None:
+        _vector_store_instance = VectorStore()
+        logger.info("[VECTOR_STORE] Created new singleton instance")
+    else:
+        # Log current state for debugging
+        count = _vector_store_instance.get_count()
+        is_cleared = _vector_store_instance._is_cleared
+        logger.debug(f"[VECTOR_STORE] Returning existing instance: count={count}, cleared={is_cleared}")
+    
+    return _vector_store_instance
+
+def reset_vector_store() -> None:
+    """Reset the vector store singleton (useful for testing)"""
+    global _vector_store_instance
+    
+    logger.info("[VECTOR_STORE] Resetting singleton...")
+    
+    # Clear the existing instance if it exists
+    if _vector_store_instance is not None:
         try:
-            # Query for all documents with this document_id
-            results = self.collection.get(
-                where={"document_id": document_id}
-            )
-            
-            formatted_results = []
-            for i in range(len(results["documents"])):
-                formatted_results.append({
-                    "index": i,
-                    "metadata": results["metadatas"][i] if results["metadatas"] else {},
-                    "document": results["documents"][i]
-                })
-            
-            return formatted_results
-            
+            _vector_store_instance.clear()
+            logger.info("[VECTOR_STORE] Cleared existing instance")
         except Exception as e:
-            logger.error(f"Failed to get documents by ID: {str(e)}")
-            return []
+            logger.warning(f"[VECTOR_STORE] Error clearing instance before reset: {e}")
+    
+    # Force delete the instance
+    old_instance_id = id(_vector_store_instance) if _vector_store_instance else None
+    _vector_store_instance = None
+    
+    # Force garbage collection
+    gc.collect()
+    
+    logger.info(f"[VECTOR_STORE] Reset complete. Old instance ID: {old_instance_id}")
+    
+def force_new_vector_store() -> VectorStore:
+    """Force create a completely new vector store instance (for testing)"""
+    global _vector_store_instance
+    
+    logger.warning("[VECTOR_STORE] FORCE creating new instance!")
+    
+    # Delete old instance
+    if _vector_store_instance is not None:
+        try:
+            _vector_store_instance.clear()
+        except:
+            pass
+    
+    _vector_store_instance = None
+    gc.collect()
+    
+    # Create new instance
+    _vector_store_instance = VectorStore()
+    logger.info(f"[VECTOR_STORE] Force created new instance: ID={id(_vector_store_instance)}")
+    
+    return _vector_store_instance

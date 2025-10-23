@@ -37,6 +37,7 @@ from app.services.chunking import chunk_text
 from app.core.dependencies import get_rag_service
 
 from app.models.rag_model import Query, Document, Session
+from app.services.vectorstore import get_vector_store
 logger = logging.getLogger(__name__)
 
 # ✅ Router prefix
@@ -46,14 +47,51 @@ router = APIRouter(prefix="/api/rag", tags=["RAG System"])
 # ============================================================
 # 🧠 RAG Query Endpoint
 # ============================================================
+# ============================================================
+# 🧠 RAG Query Endpoint (FIXED)
+# ============================================================
+
+# ============================================================
+# 🧠 RAG Query Endpoint (FIXED - Uses Your Orchestrator)
+# ============================================================
+
 @router.post("/query", response_model=RAGQueryResponse)
 async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
-    """Main RAG query endpoint with strategy support."""
+    """Main RAG query endpoint with strategy support and data safety checks."""
     try:
         logger.info(f"[QUERY] Received query: {request.query[:50]}...")
         start_time = time.time()
 
-        rag_service = get_rag_service()
+        # ✅ CORRECT: Get the RAG orchestrator (not vector store directly!)
+        from app.services.orchestrator import get_rag_orchestrator
+        from app.core.enums import RAGStrategy
+        from app.services.vectorstore import get_vector_store
+        
+        rag_service = get_rag_orchestrator()
+        vector_store = get_vector_store()  # Just for safety checks
+        
+        # ✅ CRITICAL SAFETY CHECK: Verify database AND vector store have data
+        total_docs = db.query(Document).count()
+        total_chunks = db.query(DocumentChunk).count()
+        vector_count = vector_store.get_count()
+        is_cleared = vector_store._is_cleared
+        
+        logger.info(
+            f"[DATABASE] Current state: {total_docs} docs, {total_chunks} chunks, "
+            f"{vector_count} vectors (cleared={is_cleared})"
+        )
+        
+        # ✅ IMMEDIATE REJECTION if no data exists
+        if (total_docs == 0 and total_chunks == 0) or vector_count == 0 or is_cleared:
+            logger.warning("[SAFETY] No documents/vectors in system - rejecting query")
+            return RAGQueryResponse(
+                query=request.query,
+                answer="No documents found in the system. Please upload CVs first.",
+                strategy_used="direct",
+                processing_time=0.1,
+                retrieved_chunks=[],
+                confidence_score=0.0
+            )
 
         # ✅ Map strategy string to enum
         strategy_map = {
@@ -82,18 +120,27 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
                 )
             logger.info(f"[QUERY] Querying document: {document.filename}")
 
-        # ✅ Execute orchestrator with document_id
+        # ✅ Execute RAG query using YOUR orchestrator
         result = await rag_service.execute_query(
             query=request.query,
             top_k=request.top_k,
             session_id=request.session_id,
-            document_id=document_id,  # Pass document_id to RAG service
+            document_id=document_id,
             strategy=strategy
         )
 
         processing_time = time.time() - start_time
 
-        # ✅ Save query in DB with document_id
+        # ✅ Enhanced logging for debugging
+        retrieved_chunks = result.get("retrieved_chunks", [])
+        logger.info(
+            f"[QUERY] Retrieved {len(retrieved_chunks)} chunks, "
+            f"processing time: {processing_time:.2f}s, "
+            f"source: {result.get('source', 'unknown')}, "
+            f"fallback: {result.get('fallback_used', False)}"
+        )
+
+        # ✅ Save query in DB with document_id and enhanced metadata
         db_query = Query(
             id=str(uuid.uuid4()),
             query_text=request.query,
@@ -101,26 +148,35 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
             strategy_used=request.strategy,
             processing_time=processing_time,
             confidence_score=result.get("confidence", 0.85),
-            retrieved_chunks_count=len(result.get("retrieved_chunks", [])),
+            retrieved_chunks_count=len(retrieved_chunks),
             session_id=request.session_id,
-            document_id=document_id,  # Save document_id
+            document_id=document_id,
             metadata={
                 "top_k": request.top_k,
-                "chunk_count": len(result.get("retrieved_chunks", [])),
+                "chunk_count": len(retrieved_chunks),
                 "document_id": document_id,
-                "document_filename": document.filename if document else None
+                "document_filename": document.filename if document else None,
+                "database_docs_count": total_docs,
+                "database_chunks_count": total_chunks,
+                "vector_store_count": vector_count,
+                "source": result.get("source", "vector_database"),
+                "fallback_used": result.get("fallback_used", False),
+                "max_relevance_score": result.get("max_relevance_score", 0.0),
+                "agent_steps": result.get("agent_steps", [])
             }
         )
         db.add(db_query)
         db.commit()
         db.refresh(db_query)
 
+        logger.info(f"[QUERY] Successfully processed query with {request.strategy} strategy")
+
         return RAGQueryResponse(
             query=request.query,
             answer=result["answer"],
             strategy_used=result["strategy_used"].value,
             processing_time=processing_time,
-            retrieved_chunks=result.get("retrieved_chunks", []),
+            retrieved_chunks=retrieved_chunks,
             confidence_score=result.get("confidence", 0.85)
         )
 
@@ -129,7 +185,168 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"[ERROR] Query processing failed: {str(e)}", exc_info=True)
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Query processing failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Query processing failed: {str(e)}"
+        )
+
+
+# ============================================================
+# 🧹 Clear All Documents Endpoint (FIXED)
+# ============================================================
+@router.delete("/documents/clear")
+async def clear_all_documents(db: Session = Depends(get_db)):
+    """
+    [DANGER] Danger Zone: Permanently delete all uploaded documents 
+    and clear vector stores.
+    """
+    try:
+        from app.models.rag_model import Query
+        from app.services.vectorstore import get_vector_store, reset_vector_store
+        
+        # Count before deleting
+        total_docs = db.query(Document).count()
+        total_chunks = db.query(DocumentChunk).count()
+        total_queries = db.query(Query).count()
+        
+        logger.info(f"[STATS] Before deletion: {total_docs} docs, {total_chunks} chunks, {total_queries} queries")
+        
+        # 🧠 STEP 1: Clear vector stores
+        vector_count_before = 0
+        try:
+            logger.info("[CLEAR] Step 1: Clearing vector stores...")
+            
+            # Get vector store and count
+            vector_store = get_vector_store()
+            vector_count_before = vector_store.get_count()
+            
+            logger.info(f"[VECTOR_STORE] Vector count before clear: {vector_count_before}")
+            
+            # Clear the vector store
+            vector_store.clear()
+            
+            # Reset the singleton
+            reset_vector_store()
+            
+            # Verify it's actually cleared
+            vector_store = get_vector_store()
+            vector_count_after = vector_store.get_count()
+            logger.info(f"[VECTOR_STORE] Vector count after clear: {vector_count_after}")
+            
+            if vector_count_after != 0:
+                logger.error(f"[ERROR] Vector store not fully cleared! Still has {vector_count_after} items")
+                raise Exception(f"Vector store clear incomplete: {vector_count_after} items remain")
+            
+            logger.info(f"[SUCCESS] Vector store cleared: {vector_count_before} vectors removed")
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Vector store clear failed: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to clear vector store: {str(e)}"
+            )
+        
+        # 🧹 STEP 2: Delete from database
+        deleted_docs = 0
+        deleted_chunks = 0
+        deleted_queries = 0
+        
+        try:
+            logger.info("[CLEAR] Step 2: Deleting from database...")
+            
+            # Delete queries FIRST (no foreign keys pointing to it)
+            logger.info(f"[DELETE] Deleting {total_queries} queries...")
+            deleted_queries = db.query(Query).delete(synchronize_session=False)
+            db.flush()
+            logger.info(f"[SUCCESS] Deleted {deleted_queries} queries")
+            
+            # Delete chunks (has foreign key to documents)
+            logger.info(f"[DELETE] Deleting {total_chunks} chunks...")
+            deleted_chunks = db.query(DocumentChunk).delete(synchronize_session=False)
+            db.flush()
+            logger.info(f"[SUCCESS] Deleted {deleted_chunks} chunks")
+            
+            # Delete documents (must be last)
+            logger.info(f"[DELETE] Deleting {total_docs} documents...")
+            deleted_docs = db.query(Document).delete(synchronize_session=False)
+            db.flush()
+            logger.info(f"[SUCCESS] Deleted {deleted_docs} documents")
+            
+            # Commit all changes
+            db.commit()
+            logger.info("[SUCCESS] All database deletions committed")
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[ERROR] Database deletion failed: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to delete from database: {str(e)}"
+            )
+        
+        # 📊 STEP 3: Final verification
+        remaining_docs = db.query(Document).count()
+        remaining_chunks = db.query(DocumentChunk).count()
+        remaining_queries = db.query(Query).count()
+        remaining_vectors = get_vector_store().get_count()
+        
+        logger.info(
+            f"[STATS] After deletion: {remaining_docs} docs, "
+            f"{remaining_chunks} chunks, {remaining_queries} queries, "
+            f"{remaining_vectors} vectors"
+        )
+        
+        # Check if anything remains
+        if any([remaining_docs, remaining_chunks, remaining_queries, remaining_vectors]):
+            logger.warning("[WARN] Incomplete deletion detected!")
+            return {
+                "status": "partial_success",
+                "message": "Some data may not have been fully cleared",
+                "deleted": {
+                    "documents": deleted_docs,
+                    "chunks": deleted_chunks,
+                    "queries": deleted_queries,
+                    "vectors": vector_count_before
+                },
+                "remaining": {
+                    "documents": remaining_docs,
+                    "chunks": remaining_chunks,
+                    "queries": remaining_queries,
+                    "vectors": remaining_vectors
+                }
+            }
+        
+        # Success response
+        return {
+            "status": "success",
+            "message": (
+                f"Successfully cleared all data: {deleted_docs} documents, "
+                f"{deleted_chunks} chunks, {deleted_queries} queries, "
+                f"{vector_count_before} vectors"
+            ),
+            "deleted": {
+                "documents": deleted_docs,
+                "chunks": deleted_chunks,
+                "queries": deleted_queries,
+                "vectors": vector_count_before
+            },
+            "remaining": {
+                "documents": 0,
+                "chunks": 0,
+                "queries": 0,
+                "vectors": 0
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[ERROR] Failed to clear documents: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear documents: {str(e)}"
+        )
 
 
 # ============================================================
@@ -471,95 +688,79 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
             pass  # Already rolled back or no transaction
         raise HTTPException(status_code=500, detail=f"Document upload failed: {str(e)}")
     
-# ============================================================
-# 🧹 Clear All Documents Endpoint
-# ============================================================
-@router.delete("/documents/clear")
-async def clear_all_documents(db: Session = Depends(get_db)):
-    """
-    [DANGER] Danger Zone: Permanently delete all uploaded documents 
-    and clear their embeddings from the vector store.
-    """
-    try:
-        # Import vector store
-        from app.services.vectorstore import get_vector_store, reset_vector_store
-        
-        vector_store = get_vector_store()
-        
-        # Count before deleting
-        total_docs = db.query(Document).count()
-        total_chunks = db.query(DocumentChunk).count()
-        vector_count = vector_store.get_count()
-        
-        logger.info(f"[STATS] Before deletion: {total_docs} docs, {total_chunks} chunks, {vector_count} vectors")
-        
-        # 🧠 Clear vector store FIRST and reset singleton
-        try:
-            vector_store.clear()
-            
-            # CRITICAL: Reset the singleton instance to create a fresh vector store
-            reset_vector_store()
-            
-            # Get the new instance and verify it's empty
-            vector_store = get_vector_store()
-            after_clear = vector_store.get_count()
-            
-            logger.info(f"[SUCCESS] Vector store cleared and reset: {vector_count} -> {after_clear}")
-            
-            if after_clear > 0:
-                raise Exception(f"Vector store not fully cleared: {after_clear} items remain")
-            
-        except Exception as e:
-            logger.error(f"[ERROR] Vector store clear failed: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Failed to clear vector store: {str(e)}")
-        
-        # 🧹 Delete from database (this cascades to chunks)
-        deleted_docs = db.query(Document).delete()
-        db.commit()
-        logger.info(f"[SUCCESS] Database cleared: {deleted_docs} documents deleted")
-        
-        # Final verification
-        remaining_docs = db.query(Document).count()
-        remaining_chunks = db.query(DocumentChunk).count()
-        remaining_vectors = vector_store.get_count()
-        
-        logger.info(f"[STATS] After deletion: {remaining_docs} docs, {remaining_chunks} chunks, {remaining_vectors} vectors")
-        
-        if remaining_docs > 0 or remaining_chunks > 0 or remaining_vectors > 0:
-            logger.warning(f"[WARN] Incomplete deletion detected!")
-            return {
-                "status": "partial_success",
-                "message": "Some data may not have been fully cleared",
-                "documents_deleted": total_docs,
-                "chunks_deleted": total_chunks,
-                "vectors_deleted": vector_count,
-                "remaining": {
-                    "documents": remaining_docs,
-                    "chunks": remaining_chunks,
-                    "vectors": remaining_vectors
-                }
-            }
-        
-        return {
-            "status": "success",
-            "message": f"Successfully cleared all data: {total_docs} documents, {total_chunks} chunks, {vector_count} vectors",
-            "documents_deleted": total_docs,
-            "chunks_deleted": total_chunks,
-            "vectors_deleted": vector_count,
-            "verification": {
-                "remaining_documents": 0,
-                "remaining_chunks": 0,
-                "remaining_vectors": 0
-            }
+
+
+
+
+    
+
+@router.get("/debug/rag-service")
+async def debug_rag_service():
+    """Debug the RAG service to see what vector store it uses"""
+    rag_service = get_rag_service()
+    
+    debug_info = {
+        "rag_service_type": type(rag_service).__name__,
+        "rag_service_module": rag_service.__module__,
+    }
+    
+    # Check if RAG service has a vector store attribute
+    if hasattr(rag_service, 'vector_store'):
+        vs = rag_service.vector_store
+        debug_info["vector_store_info"] = {
+            "type": type(vs).__name__,
+            "count": getattr(vs, 'get_count', lambda: 'unknown')(),
+            "documents_count": len(getattr(vs, 'documents', [])),
+            "module": vs.__module__
         }
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"[ERROR] Failed to clear documents: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to clear documents: {str(e)}")
+    # Check for other common vector store attributes
+    for attr in ['vs', 'vectorstore', 'store', 'embedding_store']:
+        if hasattr(rag_service, attr):
+            vs = getattr(rag_service, attr)
+            debug_info[f"vector_store_{attr}"] = {
+                "type": type(vs).__name__,
+                "count": getattr(vs, 'get_count', lambda: 'unknown')(),
+                "module": vs.__module__
+            }
+    
+    return debug_info
 
+
+
+@router.get("/debug/vector-store")
+async def debug_vector_store():
+    """Debug endpoint to check vector store state"""
+    from app.services.vectorstore import get_vector_store
+    
+    vector_store = get_vector_store()
+    
+    return {
+        "vector_store_instance_id": id(vector_store),
+        "in_memory_documents_count": len(vector_store.documents),
+        "in_memory_embeddings_count": len(vector_store.embeddings),
+        "in_memory_metadata_count": len(vector_store.metadata),
+        "get_count_result": vector_store.get_count(),
+        "documents_sample": vector_store.documents[:2] if vector_store.documents else [],
+        "is_faiss_used": vector_store.index is not None
+    }
+
+@router.get("/debug/database-chunks")
+async def debug_database_chunks(db: Session = Depends(get_db)):
+    """Check if there are any document chunks in the database"""
+    chunks = db.query(DocumentChunk).all()
+    
+    return {
+        "total_chunks": len(chunks),
+        "chunks_sample": [
+            {
+                "id": chunk.id,
+                "document_id": chunk.document_id,
+                "content_preview": chunk.content[:100] + "..." if chunk.content else "",
+                "created_at": chunk.created_at
+            } for chunk in chunks[:5]  # First 5 chunks
+        ] if chunks else []
+    }
 # ============================================================
 # 📄 Document Management
 # ============================================================
