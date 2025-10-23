@@ -702,3 +702,245 @@ def get_rag_service():
     from app.services.orchestrator import get_rag_orchestrator
     return get_rag_orchestrator()
 
+
+
+import io
+import logging
+from typing import List, Dict
+
+logger = logging.getLogger(__name__)
+
+# ============================================
+# PDF Extraction
+# ============================================
+
+def extract_text_from_pdf_bytes(pdf_bytes):
+    """Extract text from PDF bytes with enhanced error handling"""
+    try:
+        from PyPDF2 import PdfReader
+        
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = ""
+        
+        logger.info(f"[PDF] Processing PDF with {len(reader.pages)} pages")
+        
+        for page_num, page in enumerate(reader.pages):
+            try:
+                page_text = page.extract_text() or ""
+                if page_text.strip():
+                    text += f"Page {page_num + 1}:\n{page_text}\n\n"
+                    logger.debug(f"[PDF] Extracted {len(page_text)} chars from page {page_num + 1}")
+                else:
+                    logger.warning(f"[PDF] No text extracted from page {page_num + 1}")
+            except Exception as e:
+                logger.warning(f"[PDF] Failed to extract text from page {page_num + 1}: {str(e)}")
+                continue
+        
+        if not text.strip():
+            logger.warning("[PDF] No text content extracted from any page")
+            return ""
+            
+        logger.info(f"[PDF] Successfully extracted {len(text)} total characters")
+        return text
+        
+    except ImportError:
+        logger.error("[PDF] PyPDF2 not installed. Install with: pip install PyPDF2")
+        raise RuntimeError("PyPDF2 is required for PDF extraction. Install with: pip install PyPDF2")
+    except Exception as e:
+        logger.error(f"[PDF] PDF extraction failed: {str(e)}")
+        raise RuntimeError(f"Failed to extract text from PDF: {str(e)}")
+
+# ============================================
+# DOCX Extraction
+# ============================================
+
+def extract_text_from_docx_bytes(file_bytes: bytes) -> str:
+    """Extract text from DOCX bytes with enhanced error handling"""
+    try:
+        import docx
+    except ImportError:
+        logger.error("[DOCX] python-docx not installed. Install with: pip install python-docx")
+        raise RuntimeError("python-docx is required for DOCX extraction. Install with: pip install python-docx")
+    
+    try:
+        doc = docx.Document(io.BytesIO(file_bytes))
+        text = ""
+        
+        # Extract from paragraphs
+        for para_num, paragraph in enumerate(doc.paragraphs):
+            if paragraph.text and paragraph.text.strip():
+                text += paragraph.text + "\n"
+        
+        # Extract from tables
+        for table_num, table in enumerate(doc.tables):
+            for row_num, row in enumerate(table.rows):
+                for cell_num, cell in enumerate(row.cells):
+                    if cell.text and cell.text.strip():
+                        text += cell.text + "\n"
+        
+        # Extract from headers and footers if they exist
+        try:
+            for section in doc.sections:
+                # Header
+                if section.header:
+                    for paragraph in section.header.paragraphs:
+                        if paragraph.text and paragraph.text.strip():
+                            text += paragraph.text + "\n"
+                # Footer
+                if section.footer:
+                    for paragraph in section.footer.paragraphs:
+                        if paragraph.text and paragraph.text.strip():
+                            text += paragraph.text + "\n"
+        except Exception as e:
+            logger.debug(f"[DOCX] Could not extract headers/footers: {str(e)}")
+        
+        if not text.strip():
+            logger.warning("[DOCX] No text content extracted from DOCX file")
+            return ""
+            
+        logger.info(f"[DOCX] Successfully extracted {len(text)} characters")
+        return text.strip()
+        
+    except Exception as e:
+        logger.error(f"[DOCX] DOCX extraction failed: {str(e)}")
+        raise RuntimeError(f"Failed to extract text from DOCX: {str(e)}")
+
+# ============================================
+# TXT Extraction
+# ============================================
+
+def extract_text_from_txt_bytes(file_bytes: bytes) -> str:
+    """Extract text from TXT bytes with enhanced encoding detection"""
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1', 'utf-16', 'utf-16-le', 'utf-16-be']
+    
+    for encoding in encodings:
+        try:
+            text = file_bytes.decode(encoding)
+            # Validate that we got meaningful text (not just binary data)
+            if text.strip() and any(char.isalnum() for char in text):
+                logger.info(f"[TXT] Successfully decoded with {encoding}, extracted {len(text)} characters")
+                return text
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            logger.warning(f"[TXT] Encoding {encoding} failed: {str(e)}")
+            continue
+    
+    # Fallback: try with common encoding and ignore errors
+    try:
+        text = file_bytes.decode('utf-8', errors='ignore')
+        if text.strip():
+            logger.warning(f"[TXT] Using utf-8 with error ignore, extracted {len(text)} characters")
+            return text
+    except Exception as e:
+        logger.error(f"[TXT] Fallback decoding failed: {str(e)}")
+    
+    # Last resort: try to decode as ASCII
+    try:
+        text = file_bytes.decode('ascii', errors='ignore')
+        if text.strip():
+            logger.warning(f"[TXT] Using ASCII with error ignore, extracted {len(text)} characters")
+            return text
+    except Exception as e:
+        logger.error(f"[TXT] ASCII decoding failed: {str(e)}")
+    
+    logger.error("[TXT] All encoding attempts failed")
+    raise RuntimeError("Could not decode text file with any supported encoding")
+
+# ============================================
+# Text Chunking Function
+# ============================================
+
+def chunk_text(text: str, chunk_size: int = 800, chunk_overlap: int = 100) -> List[Dict]:
+    """Chunk text with overlap and return list of chunk dictionaries"""
+    if not text or len(text.strip()) == 0:
+        logger.warning("[CHUNKING] Empty text provided for chunking")
+        return []
+    
+    # Clean the text
+    clean_text = text.strip()
+    words = clean_text.split()
+    
+    if len(words) <= chunk_size:
+        logger.info(f"[CHUNKING] Text is small ({len(words)} words), returning single chunk")
+        return [{
+            "content": clean_text,
+            "word_count": len(words),
+            "char_count": len(clean_text)
+        }]
+    
+    chunks = []
+    start = 0
+    
+    while start < len(words):
+        end = start + chunk_size
+        chunk_words = words[start:end]
+        chunk_text = " ".join(chunk_words)
+        
+        chunks.append({
+            "content": chunk_text,
+            "word_count": len(chunk_words),
+            "char_count": len(chunk_text),
+            "start_word": start,
+            "end_word": min(end, len(words))
+        })
+        
+        if end >= len(words):
+            break
+            
+        # Move start position with overlap
+        start = end - chunk_overlap
+        if start < 0:
+            start = 0
+        # Prevent infinite loop
+        if start >= len(words):
+            break
+    
+    # Calculate statistics
+    if chunks:
+        word_counts = [chunk['word_count'] for chunk in chunks]
+        char_counts = [chunk['char_count'] for chunk in chunks]
+        
+        logger.info(f"[CHUNKING] Created {len(chunks)} chunks from {len(words)} words")
+        logger.info(f"[CHUNKING] Chunk stats - Words: min={min(word_counts)}, max={max(word_counts)}, avg={sum(word_counts)/len(word_counts):.1f}")
+        logger.info(f"[CHUNKING] Chunk stats - Chars: min={min(char_counts)}, max={max(char_counts)}, avg={sum(char_counts)/len(char_counts):.1f}")
+    
+    return chunks
+
+# ============================================
+# File Type Detection Helper
+# ============================================
+
+def detect_file_type(filename: str, content_type: str) -> str:
+    """Detect file type from filename and content type"""
+    file_extension = filename.lower().split('.')[-1] if '.' in filename else ''
+    
+    if content_type == "application/pdf" or file_extension == "pdf":
+        return "pdf"
+    elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or file_extension == "docx":
+        return "docx"
+    elif content_type == "text/plain" or file_extension == "txt":
+        return "txt"
+    else:
+        logger.warning(f"[FILE_TYPE] Unknown file type: {content_type}, extension: {file_extension}")
+        return "unknown"
+
+# ============================================
+# Main Text Extraction Function
+# ============================================
+
+def extract_text_from_file(file_bytes: bytes, filename: str, content_type: str) -> str:
+    """Main function to extract text from any supported file type"""
+    file_type = detect_file_type(filename, content_type)
+    
+    logger.info(f"[EXTRACTION] Extracting text from {filename} (type: {file_type})")
+    
+    if file_type == "pdf":
+        return extract_text_from_pdf_bytes(file_bytes)
+    elif file_type == "docx":
+        return extract_text_from_docx_bytes(file_bytes)
+    elif file_type == "txt":
+        return extract_text_from_txt_bytes(file_bytes)
+    else:
+        logger.error(f"[EXTRACTION] Unsupported file type: {file_type}")
+        raise RuntimeError(f"Unsupported file type: {file_type}. Supported: PDF, DOCX, TXT")
