@@ -44,15 +44,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rag", tags=["RAG System"])
 
 
-# ============================================================
-# 🧠 RAG Query Endpoint
-# ============================================================
-# ============================================================
-# 🧠 RAG Query Endpoint (FIXED)
-# ============================================================
 
 # ============================================================
-# 🧠 RAG Query Endpoint (FIXED - Uses Your Orchestrator)
+# 🧠 RAG Query Endpoint (FIXED)
 # ============================================================
 
 @router.post("/query", response_model=RAGQueryResponse)
@@ -213,6 +207,7 @@ async def clear_all_documents(db: Session = Depends(get_db)):
         
         # 🧠 STEP 1: Clear vector stores
         vector_count_before = 0
+        # 🧹 STEP 1: Clear vector stores - ENHANCED
         try:
             logger.info("[CLEAR] Step 1: Clearing vector stores...")
             
@@ -222,15 +217,16 @@ async def clear_all_documents(db: Session = Depends(get_db)):
             
             logger.info(f"[VECTOR_STORE] Vector count before clear: {vector_count_before}")
             
-            # Clear the vector store
+            # Clear using the fixed method
             vector_store.clear()
             
-            # Reset the singleton
-            reset_vector_store()
+            # Force a completely new instance to be sure
+            reset_vector_store(force_new=True)
             
             # Verify it's actually cleared
             vector_store = get_vector_store()
             vector_count_after = vector_store.get_count()
+            
             logger.info(f"[VECTOR_STORE] Vector count after clear: {vector_count_after}")
             
             if vector_count_after != 0:
@@ -1273,3 +1269,74 @@ async def get_document_graph(document_id: str, db: Session = Depends(get_db)):
             } for r in relationships
         ]
     }
+
+
+@router.get("/debug/vector-store-detailed")
+async def debug_vector_store_detailed():
+    """Detailed debug endpoint for vector store"""
+    from app.services.vectorstore import get_vector_store, _vector_store_instance
+    
+    vector_store = get_vector_store()
+    
+    # Get detailed internal state
+    detailed_info = {
+        "vector_store_instance_id": id(vector_store),
+        "singleton_instance_id": id(_vector_store_instance) if _vector_store_instance else None,
+        "is_same_instance": vector_store is _vector_store_instance,
+        "_is_cleared": vector_store._is_cleared,
+        "documents_count": len(vector_store.documents),
+        "metadata_count": len(vector_store.metadata),
+        "embeddings_count": len(vector_store.embeddings),
+        "index_exists": vector_store.index is not None,
+        "get_count_result": vector_store.get_count(),
+    }
+    
+    # Document sources analysis
+    sources = {}
+    for i, meta in enumerate(vector_store.metadata):
+        source = meta.get("source", "unknown")
+        if source not in sources:
+            sources[source] = 0
+        sources[source] += 1
+    
+    detailed_info["sources_breakdown"] = sources
+    
+    # Sample of actual document content
+    sample_docs = []
+    for i, doc in enumerate(vector_store.documents[:3]):  # First 3 docs
+        sample_docs.append({
+            "index": i,
+            "content_preview": doc[:100] + "..." if len(doc) > 100 else doc,
+            "source": vector_store.metadata[i].get("source", "unknown") if i < len(vector_store.metadata) else "unknown"
+        })
+    
+    detailed_info["documents_sample"] = sample_docs
+    
+    return detailed_info
+
+
+@router.get("/debug/rag-orchestrator")
+async def debug_rag_orchestrator():
+    """Debug the RAG orchestrator state"""
+    from app.services.orchestrator import get_rag_orchestrator
+    from app.services.vectorstore import get_vector_store
+    
+    rag_service = get_rag_orchestrator()
+    vector_store = get_vector_store()
+    
+    debug_info = {
+        "rag_service_type": type(rag_service).__name__,
+        "vector_store_type": type(vector_store).__name__,
+        "vector_store_docs": vector_store.get_count(),
+    }
+    
+    # Check if RAG service has any internal caches
+    for attr in ['_cache', '_embedding_cache', 'cache', 'embedding_cache', 'vector_store']:
+        if hasattr(rag_service, attr):
+            cache_val = getattr(rag_service, attr)
+            if hasattr(cache_val, '__len__'):
+                debug_info[f"rag_{attr}"] = len(cache_val)
+            else:
+                debug_info[f"rag_{attr}"] = f"Exists: {type(cache_val)}"
+    
+    return debug_info
