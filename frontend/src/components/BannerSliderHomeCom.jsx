@@ -17,7 +17,7 @@ const HomePage = () => {
   useEffect(() => {
     const fetchImages = async () => {
       try {
-        const res = await AxiosInstance.get('/images/publiccategorywise?category=BannerImageSliders');
+        const res = await AxiosInstance.get('/images/publiccategorywise?category=BannerImageSlider');
         if (res?.data?.result?.data) {
           setBanners(res.data.result.data);
         } else {
