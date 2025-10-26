@@ -77,7 +77,7 @@
 
 from app.database import SessionLocal
 from app.models import User
-from app.utils import get_password_hash
+from app.utils.hashing import get_password_hash
 from sqlalchemy.exc import SQLAlchemyError
 
 def populate():

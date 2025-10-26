@@ -1,8 +1,8 @@
-"""Added new model or field
+"""fixed initial
 
-Revision ID: ae0068303652
-Revises: bce815a0de77
-Create Date: 2025-10-19 22:58:44.105909
+Revision ID: a0107b1b598b
+Revises: e12a0e0bc430
+Create Date: 2025-10-26 11:36:59.991648
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'ae0068303652'
-down_revision: Union[str, Sequence[str], None] = 'bce815a0de77'
+revision: str = 'a0107b1b598b'
+down_revision: Union[str, Sequence[str], None] = 'e12a0e0bc430'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
