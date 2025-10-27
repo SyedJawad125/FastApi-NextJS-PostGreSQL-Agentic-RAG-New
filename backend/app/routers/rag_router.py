@@ -41,7 +41,7 @@ from app.services.vectorstore import get_vector_store
 logger = logging.getLogger(__name__)
 
 # ✅ Router prefix
-router = APIRouter(prefix="/api/rag", tags=["RAG System"])
+router = APIRouter(tags=["RAG System"])
 
 
 
