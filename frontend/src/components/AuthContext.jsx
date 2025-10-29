@@ -332,7 +332,7 @@ export const AuthProvider = ({ children }) => {
   // Login function
   const login = useCallback(async (credentials) => {
     try {
-      const response = await AxiosInstance.post('/users/login', credentials);
+      const response = await AxiosInstance.post('api/auth/login-json', credentials);
       
       // Handle intercepted 403 errors
       if (response.error) {

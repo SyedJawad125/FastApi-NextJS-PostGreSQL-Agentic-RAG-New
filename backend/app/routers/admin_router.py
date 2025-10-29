@@ -12,7 +12,7 @@ from app.schemas.rag_schemas import SystemStats
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/admin", tags=["Admin"])
+router = APIRouter(tags=["Admin"])
 
 
 @router.get("/stats", response_model=SystemStats)

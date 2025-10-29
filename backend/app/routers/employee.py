@@ -47,7 +47,6 @@ from app.dependencies.permission import require
 # )     , Url is,  http://127.0.0.1:8000/api/v1/employees
 
 router = APIRouter(
-    prefix="/employees",
     tags=['Employees']
 )
 

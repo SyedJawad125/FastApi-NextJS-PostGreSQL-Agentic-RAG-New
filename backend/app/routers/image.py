@@ -16,7 +16,7 @@ from app.crud.image import update_image
 from builtins import Exception
 from app.dependencies.permission import require
 
-router = APIRouter(prefix="/images", tags=["Images"])
+router = APIRouter(tags=["Images"])
 
 
 @router.post("/", response_model=ImageOut, dependencies=[require("read_image")])

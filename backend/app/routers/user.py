@@ -252,7 +252,6 @@ from app.database import get_db
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 router = APIRouter(
-    prefix="/users",
     tags=['Users']
 )
 

@@ -1063,20 +1063,20 @@ logger.info("=" * 60)
 
 router_configs = [
     # HRM Routers
-    ("app.routers.auth", "auth", "/api/auth", ["Authentication"]),
-    ("app.routers.user", "user", "/api/users", ["Users"]),
-    ("app.routers.employee", "employee", "/api/employees", ["Employees"]),
-    ("app.routers.role", "role", "/api/roles", ["Roles"]),
-    ("app.routers.permission", "permission", "/api/permissions", ["Permissions"]),
-    ("app.routers.image_category", "image_category", "/api/image-categories", ["Image Categories"]),
-    ("app.routers.image", "image", "/api/images", ["Images"]),
+    ("app.routers.auth", "router", "/api/auth", ["Authentication"]),
+    ("app.routers.user", "router", "/api/users", ["Users"]),
+    ("app.routers.employee", "router", "/api/employees", ["Employees"]),
+    ("app.routers.role", "router", "/api/roles", ["Roles"]),
+    ("app.routers.permission", "router", "/api/permissions", ["Permissions"]),
+    ("app.routers.image_category", "router", "/api/image-categories", ["ImageCategory"]),
+    ("app.routers.image", "router", "/api/images", ["Images"]),
     
     # RAG Routers
-    ("app.routers.rag_router", "router", "/api/rag", ["RAG"]),
-    ("app.routers.agent_router", "agent_router", "/api/agent", ["Agent"]),
-    ("app.routers.graph_router", "graph_router", "/api/graph", ["Graph"]),
-    ("app.routers.document_router", "document_router", "/api/documents", ["Documents"]),
-    ("app.routers.admin_router", "router", "/api/admin", ["Admin"]),
+    ("app.routers.rag_router", "router", "/api/rag", ["RAG System"]),
+    # ("app.routers.agent_router", "agent_router", "/api/agent", ["Agent"]),
+    # ("app.routers.graph_router", "graph_router", "/api/graph", ["Graph"]),
+    # ("app.routers.document_router", "document_router", "/api/documents", ["Documents"]),
+    # ("app.routers.admin_router", "router", "/api/admin", ["Admin"]),
 ]
 
 loaded_routers = []
@@ -1351,3 +1351,17 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     )
+
+
+import logging
+import sys
+
+# Fix Unicode logging issue
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('logs/app.log', encoding='utf-8')
+    ]
+)

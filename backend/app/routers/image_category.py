@@ -15,7 +15,6 @@ from app.dependencies.permission import require
 from math import ceil
 
 router = APIRouter(
-    prefix="/image_categories",
     tags=['ImageCategory']
 )
 

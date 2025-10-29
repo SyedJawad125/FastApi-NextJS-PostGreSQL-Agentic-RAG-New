@@ -9,7 +9,6 @@ from app.dependencies.permission import permission_required, require
 
 
 router = APIRouter(
-    prefix="/roles",
     tags=['Roles']
 )
 
