@@ -1,8 +1,74 @@
+# import io
+# import os
+# import traceback
+# from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Depends
+# from openai import BaseModel
+# from sqlalchemy.orm import Session
+# from typing import Dict
+# import time
+# from datetime import datetime
+# import uuid
+# import logging
+
+# # Schemas - Updated with Agentic RAG support
+# from app.schemas.rag_schemas import (
+#     # Query schemas
+#     RAGQueryRequest,
+#     RAGQueryResponse,
+    
+#     # Multi-agent schemas
+#     MultiAgentQuery,
+#     MultiAgentResponse,
+    
+#     # Graph schemas
+#     GraphQuery,
+#     GraphQueryResponse,
+    
+#     # Document schemas
+#     DocumentUpload,
+#     DocumentUploadResponse,
+#     DocumentResponse,
+#     DocumentList,
+    
+#     # Agent execution schemas (NEW)
+#     AgentExecutionDetail,
+#     AgentExecutionSummary,
+#     AgentExecutionListResponse,
+    
+#     # Health & Stats schemas
+#     HealthCheck,
+#     HealthCheckResponse,
+#     SystemStats,
+    
+#     # Session schemas (NEW)
+#     SessionCreate,
+#     SessionResponse,
+# )
+# # Database
+# from app.core.config import get_db
+# from app.models.rag_model import (
+#     Document,
+#     DocumentChunk,
+#     GraphEntity,
+#     GraphRelationship,
+#     Query as QueryModel,
+#     Session as SessionModel
+# )
+
+# # Orchestrator service
+# from app.core.dependencies import extract_text_from_docx_bytes, extract_text_from_pdf_bytes, extract_text_from_txt_bytes, get_rag_service
+# from app.core.enums import RAGStrategy
+# from app.services.chunking import chunk_text
+# # from app.services.vectorstore import get_vector_store
+# from app.core.dependencies import get_rag_service
+
+# from app.models.rag_model import Query, Document, Session
+# from app.services.vectorstore import get_vector_store
+
 import io
 import os
 import traceback
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Depends
-from openai import BaseModel
 from sqlalchemy.orm import Session
 from typing import Dict
 import time
@@ -10,12 +76,39 @@ from datetime import datetime
 import uuid
 import logging
 
-# Schemas
+# ✅ Schemas - Updated with Agentic RAG support
 from app.schemas.rag_schemas import (
+    # Query schemas
     RAGQueryRequest,
     RAGQueryResponse,
+    
+    # Multi-agent schemas
+    MultiAgentQuery,
+    MultiAgentResponse,
+    
+    # Graph schemas
+    GraphQuery,
+    GraphQueryResponse,
+    
+    # Document schemas
+    DocumentUpload,
+    DocumentUploadResponse,
+    DocumentResponse,
+    DocumentList,
+    
+    # Agent execution schemas (NEW)
+    AgentExecutionDetail,
+    AgentExecutionSummary,
+    AgentExecutionListResponse,
+    
+    # Health & Stats schemas
+    HealthCheck,
     HealthCheckResponse,
-    DocumentUploadResponse
+    SystemStats,
+    
+    # Session schemas (NEW)
+    SessionCreate,
+    SessionResponse,
 )
 
 # Database
@@ -29,19 +122,23 @@ from app.models.rag_model import (
     Session as SessionModel
 )
 
-# Orchestrator service
-from app.core.dependencies import extract_text_from_docx_bytes, extract_text_from_pdf_bytes, extract_text_from_txt_bytes, get_rag_service
+# Dependencies
+from app.core.dependencies import (
+    extract_text_from_docx_bytes,
+    extract_text_from_pdf_bytes,
+    extract_text_from_txt_bytes,
+    get_rag_service,
+    get_vectorstore,
+    get_embedding_service
+)
 from app.core.enums import RAGStrategy
 from app.services.chunking import chunk_text
-# from app.services.vectorstore import get_vector_store
-from app.core.dependencies import get_rag_service
-
-from app.models.rag_model import Query, Document, Session
-from app.services.vectorstore import get_vector_store
+from app.models.rag_model import Query
 logger = logging.getLogger(__name__)
 
 # ✅ Router prefix
 router = APIRouter(tags=["RAG System"])
+
 
 
 
@@ -186,20 +283,20 @@ from app.core.dependencies import get_vectorstore
 
 @router.post("/query", response_model=RAGQueryResponse)
 async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
-    """Main RAG query endpoint with strategy support and data safety checks."""
+    """Main RAG query endpoint with Agentic ReAct Pattern"""
     try:
         logger.info(f"[QUERY] Received query: {request.query[:50]}...")
         start_time = time.time()
 
-        # ✅ CORRECT: Get the RAG orchestrator and ChromaDB vector store
+        # Get the RAG orchestrator (now with Agentic ReAct)
         from app.services.orchestrator import get_rag_orchestrator
         from app.core.enums import RAGStrategy
-        from app.core.dependencies import get_vectorstore  # ✅ Use ChromaDB
+        from app.core.dependencies import get_vectorstore
         
         rag_service = get_rag_orchestrator()
-        vector_store = get_vectorstore()  # ✅ ChromaDB instance
+        vector_store = get_vectorstore()
         
-        # ✅ FIXED: Only log the state, don't reject queries
+        # Log current state
         total_docs = db.query(Document).count()
         total_chunks = db.query(DocumentChunk).count()
         vector_count = vector_store.get_count()
@@ -209,10 +306,6 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
             f"{vector_count} vectors in ChromaDB"
         )
         
-        # ✅ REMOVED: The safety check that rejects all queries
-        # The RAG orchestrator will handle fallback to general knowledge automatically
-        
-        # ✅ Rest of your existing code...
         # Map strategy string to enum
         strategy_map = {
             "simple": RAGStrategy.SIMPLE,
@@ -228,7 +321,7 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
 
         strategy = strategy_map[request.strategy]
 
-        # ✅ Validate document exists if document_id is provided
+        # Validate document exists if document_id is provided
         document_id = request.document_id
         document = None
         if document_id:
@@ -240,8 +333,7 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
                 )
             logger.info(f"[QUERY] Querying document: {document.filename}")
 
-        # ✅ Execute RAG query using YOUR orchestrator
-        # This will automatically fallback to general knowledge when no relevant documents found
+        # ⭐ Execute query using Agentic ReAct Coordinator
         result = await rag_service.execute_query(
             query=request.query,
             top_k=request.top_k,
@@ -252,16 +344,17 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
 
         processing_time = time.time() - start_time
 
-        # ✅ Enhanced logging for debugging
+        # Enhanced logging with agent steps
         retrieved_chunks = result.get("retrieved_chunks", [])
+        execution_steps = result.get("execution_steps", [])
+        
         logger.info(
             f"[QUERY] Retrieved {len(retrieved_chunks)} chunks, "
             f"processing time: {processing_time:.2f}s, "
             f"source: {result.get('source', 'unknown')}, "
-            f"fallback: {result.get('fallback_used', False)}"
+            f"agent_steps: {len(execution_steps)}"
         )
-
-        # ✅ Save query in DB with document_id and enhanced metadata
+        # Save query in DB with enhanced metadata
         db_query = Query(
             id=str(uuid.uuid4()),
             query_text=request.query,
@@ -272,7 +365,8 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
             retrieved_chunks_count=len(retrieved_chunks),
             session_id=request.session_id,
             document_id=document_id,
-            metadata={
+            agent_steps_count=len(execution_steps),  # ⭐ New field
+            meta_data={
                 "top_k": request.top_k,
                 "chunk_count": len(retrieved_chunks),
                 "document_id": document_id,
@@ -280,25 +374,42 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
                 "database_docs_count": total_docs,
                 "database_chunks_count": total_chunks,
                 "vector_store_count": vector_count,
-                "source": result.get("source", "vector_database"),
-                "fallback_used": result.get("fallback_used", False),
-                "max_relevance_score": result.get("max_relevance_score", 0.0),
-                "agent_steps": result.get("agent_steps", [])
+                "source": result.get("source", "coordinator_agent"),
+                "agent_type": result.get("agent_type", "coordinator_react"),
+                "execution_steps": execution_steps,  # ⭐ ReAct trace
+                "internet_sources": result.get("internet_sources", []),  # ⭐ Tavily sources
+                "agent_steps_count": len(execution_steps)
             }
         )
         db.add(db_query)
         db.commit()
         db.refresh(db_query)
 
-        logger.info(f"[QUERY] Successfully processed query with {request.strategy} strategy")
-
+        logger.info(f"[QUERY] Successfully processed query with {request.strategy} strategy using ReAct Agent")
+        
+        # return RAGQueryResponse(
+        #     query=request.query,
+        #     answer=result["answer"],
+        #     strategy_used=result["strategy_used"].value,
+        #     processing_time=processing_time,
+        #     retrieved_chunks=retrieved_chunks,
+        #     confidence_score=result.get("confidence", 0.85)
+        # )
         return RAGQueryResponse(
             query=request.query,
             answer=result["answer"],
             strategy_used=result["strategy_used"].value,
             processing_time=processing_time,
             retrieved_chunks=retrieved_chunks,
-            confidence_score=result.get("confidence", 0.85)
+            confidence_score=result.get("confidence", 0.85),
+            # ⭐ Add the missing agent metadata
+            source=result.get("source"),
+            agent_type=result.get("agent_type"),
+            execution_steps=result.get("execution_steps"),
+            internet_sources=result.get("internet_sources"),
+            agent_steps_count=len(result.get("execution_steps", [])),
+            relevance_check=None,  # Not needed in response
+            fallback_used=result.get("fallback_used", False)
         )
 
     except HTTPException:
@@ -310,6 +421,8 @@ async def query_rag(request: RAGQueryRequest, db: Session = Depends(get_db)):
             status_code=500, 
             detail=f"Query processing failed: {str(e)}"
         )
+
+        # Save query in DB with enhanced metadata
 # ============================================================
 # 🧹 Clear All Documents Endpoint (FIXED)
 # ============================================================
@@ -1393,25 +1506,23 @@ async def get_query(query_id: str, db: Session = Depends(get_db)):
 @router.get("/health", response_model=HealthCheckResponse)
 async def health_check(db: Session = Depends(get_db)):
     """
-    Comprehensive health check that tests all critical services.
+    Comprehensive health check including Tavily API
     """
-
     from sqlalchemy import text
+    import os
 
-    # ✅ Initialize all components with default "unknown"
     components = {
         "database": "unknown",
         "llm_service": "unknown",
         "embedding_service": "unknown",
         "vector_store": "unknown",
-        "knowledge_graph": "unknown",
-        "memory": "unknown",
-        "agents": "unknown",
+        "tavily_api": "unknown",  # ⭐ New component
+        "coordinator_agent": "unknown",  # ⭐ New component
     }
 
     all_healthy = True
 
-    # 1. 🧪 Test Database
+    # 1. Test Database
     try:
         db.execute(text("SELECT 1"))
         components["database"] = "operational"
@@ -1419,7 +1530,7 @@ async def health_check(db: Session = Depends(get_db)):
         components["database"] = f"error: {str(e)}"
         all_healthy = False
 
-    # 2. 🤖 Test LLM Service (Groq)
+    # 2. Test LLM Service (Groq)
     rag_service = None
     try:
         rag_service = get_rag_service()
@@ -1439,7 +1550,7 @@ async def health_check(db: Session = Depends(get_db)):
         components["llm_service"] = f"error: {str(e)}"
         all_healthy = False
 
-    # 3. 🧠 Test Embedding Service
+    # 3. Test Embedding Service
     try:
         if rag_service:
             test_embedding = rag_service.embedding_service.embed_text("test")
@@ -1452,7 +1563,7 @@ async def health_check(db: Session = Depends(get_db)):
         components["embedding_service"] = f"error: {str(e)}"
         all_healthy = False
 
-    # 4. 🧰 Test Vector Store
+    # 4. Test Vector Store
     try:
         if rag_service:
             _ = rag_service.vectorstore.get_count()
@@ -1461,33 +1572,53 @@ async def health_check(db: Session = Depends(get_db)):
         components["vector_store"] = f"error: {str(e)}"
         all_healthy = False
 
-    # 5. 🕸 Test Knowledge Graph
+    # 5. ⭐ Test Tavily API
     try:
-        if rag_service and hasattr(rag_service, "graph_builder") and rag_service.graph_builder:
-            components["knowledge_graph"] = "operational"
+        tavily_key = os.getenv("TAVILY_API_KEY")
+        if tavily_key:
+            from tavily import TavilyClient
+            tavily_client = TavilyClient(api_key=tavily_key)
+            
+            # Quick test search
+            test_result = tavily_client.search(
+                query="test",
+                search_depth="basic",
+                max_results=1
+            )
+            
+            if test_result:
+                components["tavily_api"] = "operational"
+            else:
+                components["tavily_api"] = "error: no response"
         else:
-            components["knowledge_graph"] = "disabled"
+            components["tavily_api"] = "disabled: no API key"
     except Exception as e:
-        components["knowledge_graph"] = f"error: {str(e)}"
+        components["tavily_api"] = f"error: {str(e)}"
+        # Don't mark as unhealthy - Tavily is optional
 
-    # 6. 🧠 Memory & Agents (Basic Check)
+    # 6. ⭐ Test Coordinator Agent
     try:
-        components["memory"] = "operational"
-        components["agents"] = "operational"
+        from app.services.orchestrator import get_rag_orchestrator
+        orchestrator = get_rag_orchestrator()
+        
+        if orchestrator and orchestrator.coordinator:
+            components["coordinator_agent"] = "operational"
+        else:
+            components["coordinator_agent"] = "error: not initialized"
+            all_healthy = False
     except Exception as e:
-        components["memory"] = f"error: {str(e)}"
-        components["agents"] = f"error: {str(e)}"
+        components["coordinator_agent"] = f"error: {str(e)}"
+        all_healthy = False
 
-    # 📊 Overall status
+    # Overall status
     status = "healthy" if all_healthy else "degraded"
 
     return HealthCheckResponse(
         status=status,
         timestamp=datetime.now(),
-        version="2.0.0",
+        version="2.1.0-agentic",  # ⭐ Updated version
         components=components
     )
-
 
 @router.get("/health/detailed")
 async def detailed_health_check(db: Session = Depends(get_db)):
@@ -2057,3 +2188,101 @@ async def debug_chromadb_contents():
         
     except Exception as e:
         return {"error": str(e)}
+    
+
+
+@router.get("/debug/agent-execution/{query_id}")
+async def debug_agent_execution(query_id: str, db: Session = Depends(get_db)):
+    """
+    View detailed ReAct agent execution steps for a specific query
+    """
+    query = db.query(QueryModel).filter(QueryModel.id == query_id).first()
+    
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found")
+    
+    metadata = query.meta_data or {}
+    execution_steps = metadata.get("execution_steps", [])
+    
+    # Format execution trace
+    formatted_steps = []
+    for i, step in enumerate(execution_steps, 1):
+        formatted_steps.append({
+            "step_number": i,
+            "type": step.get("type"),
+            "content": step.get("content"),
+            "timestamp": step.get("timestamp")
+        })
+    
+    return {
+        "query_id": query.id,
+        "query_text": query.query_text,
+        "answer_preview": query.answer[:200] + "..." if query.answer else "",
+        "strategy_used": query.strategy_used,
+        "source": metadata.get("source"),
+        "agent_type": metadata.get("agent_type"),
+        "total_steps": len(execution_steps),
+        "execution_trace": formatted_steps,
+        "internet_sources": metadata.get("internet_sources", []),
+        "processing_time": query.processing_time,
+        "confidence_score": query.confidence_score
+    }
+
+
+@router.get("/debug/latest-agent-execution")
+async def debug_latest_agent_execution(db: Session = Depends(get_db)):
+    """
+    View the most recent agent execution trace
+    """
+    latest_query = db.query(QueryModel).order_by(
+        QueryModel.created_at.desc()
+    ).first()
+    
+    if not latest_query:
+        return {"message": "No queries found"}
+    
+    return await debug_agent_execution(latest_query.id, db)
+
+@router.get("/agent-executions")
+async def list_agent_executions(
+    limit: int = 10, 
+    skip: int = 0, 
+    db: Session = Depends(get_db)
+):
+    """
+    List recent agent executions with execution statistics
+    """
+    queries = db.query(QueryModel).order_by(
+        QueryModel.created_at.desc()
+    ).offset(skip).limit(limit).all()
+    
+    executions = []
+    for query in queries:
+        metadata = query.meta_data or {}
+        execution_steps = metadata.get("execution_steps", [])
+        
+        # Count step types
+        step_counts = {}
+        for step in execution_steps:
+            step_type = step.get("type", "UNKNOWN")
+            step_counts[step_type] = step_counts.get(step_type, 0) + 1
+        
+        executions.append({
+            "query_id": query.id,
+            "query_text": query.query_text[:100] + "..." if len(query.query_text) > 100 else query.query_text,
+            "strategy": query.strategy_used,
+            "source": metadata.get("source", "unknown"),
+            "agent_type": metadata.get("agent_type", "unknown"),
+            "total_steps": len(execution_steps),
+            "step_breakdown": step_counts,
+            "processing_time": query.processing_time,
+            "confidence_score": query.confidence_score,
+            "created_at": query.created_at.isoformat() if query.created_at else None,
+            "used_internet": len(metadata.get("internet_sources", [])) > 0
+        })
+    
+    return {
+        "total": db.query(QueryModel).count(),
+        "showing": len(executions),
+        "executions": executions
+    }

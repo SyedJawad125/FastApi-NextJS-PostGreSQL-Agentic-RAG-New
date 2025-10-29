@@ -14,18 +14,20 @@
 
 # class RAGQueryRequest(BaseModel):
 #     """RAG query request schema"""
-#     query: str = Field(..., min_length=1, description="User query")
-#     strategy: str = Field(default="simple", description="RAG strategy: simple, agentic, auto")
-#     top_k: int = Field(default=5, ge=1, le=20, description="Number of results to retrieve")
-#     session_id: Optional[str] = Field(default=None, description="Session ID for conversation context")
+#     query: str
+#     strategy: str = "simple"
+#     top_k: int = 5
+#     session_id: Optional[str] = None
+#     document_id: Optional[str] = None  # Add this field
     
 #     class Config:
 #         json_schema_extra = {
 #             "example": {
-#                 "query": "What is machine learning?",
+#                 "query": "What is AI?",
 #                 "strategy": "simple",
 #                 "top_k": 5,
-#                 "session_id": None
+#                 "session_id": "session-123",
+#                 "document_id": "doc-456"
 #             }
 #         }
 
@@ -165,6 +167,7 @@
 #     status: str
 #     chunks_created: int
 #     message: str
+#     processing_time: Optional[str] = None
     
 #     class Config:
 #         json_schema_extra = {
@@ -173,7 +176,8 @@
 #                 "filename": "machine_learning.pdf",
 #                 "status": "success",
 #                 "chunks_created": 45,
-#                 "message": "Document processed successfully"
+#                 "message": "Document processed successfully",
+#                 "processing_time": "5.2 seconds"
 #             }
 #         }
 
@@ -291,21 +295,47 @@
 
 # # These aliases ensure backward compatibility
 # RAGQuery = RAGQueryRequest
-# RAGResponse = RAGQueryResponse
-# DocumentUpload = DocumentUpload  # Already correct
-
-
 
 
 
 """
 ===================================================================
-app/schemas/rag_schemas.py - Complete RAG Schemas (FIXED)
+app/schemas/rag_schemas.py - Complete RAG Schemas with Agentic ReAct Pattern
 ===================================================================
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from enum import Enum
+
+
+# ============================================================
+# ENUMS
+# ============================================================
+
+class RAGStrategyEnum(str, Enum):
+    """RAG strategy options"""
+    SIMPLE = "simple"
+    AGENTIC = "agentic"
+    AUTO = "auto"
+
+
+class SourceType(str, Enum):
+    """Source of the answer"""
+    CHROMADB = "chromadb"
+    VECTOR_DATABASE = "vector_database"
+    INTERNET = "internet"
+    GENERAL_KNOWLEDGE = "general_knowledge"
+    COORDINATOR_AGENT = "coordinator_agent"
+    ERROR = "error"
+
+
+class AgentStepType(str, Enum):
+    """Types of agent execution steps (ReAct pattern)"""
+    THOUGHT = "THOUGHT"
+    ACTION = "ACTION"
+    OBSERVATION = "OBSERVATION"
+    ERROR = "ERROR"
 
 
 # ============================================================
@@ -313,18 +343,24 @@ from datetime import datetime
 # ============================================================
 
 class RAGQueryRequest(BaseModel):
-    """RAG query request schema"""
-    query: str
-    strategy: str = "simple"
-    top_k: int = 5
-    session_id: Optional[str] = None
-    document_id: Optional[str] = None  # Add this field
+    """RAG query request schema with agentic support"""
+    query: str = Field(..., min_length=1, max_length=2000, description="The question or query to process")
+    strategy: str = Field(default="auto", description="RAG strategy: simple, agentic, or auto")
+    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve")
+    session_id: Optional[str] = Field(default=None, description="Session ID for conversation tracking")
+    document_id: Optional[str] = Field(default=None, description="Specific document ID to search")
+    
+    @validator('strategy')
+    def validate_strategy(cls, v):
+        if v not in ['simple', 'agentic', 'auto']:
+            raise ValueError('Strategy must be: simple, agentic, or auto')
+        return v
     
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "What is AI?",
-                "strategy": "simple",
+                "query": "What are the key skills mentioned in the CV?",
+                "strategy": "agentic",
                 "top_k": 5,
                 "session_id": "session-123",
                 "document_id": "doc-456"
@@ -332,24 +368,136 @@ class RAGQueryRequest(BaseModel):
         }
 
 
-class RAGQueryResponse(BaseModel):
-    """RAG query response schema"""
-    query: str
-    answer: str
-    strategy_used: str
-    processing_time: float
-    retrieved_chunks: List[Dict[str, Any]] = []
-    confidence_score: Optional[float] = None
+class RetrievedChunk(BaseModel):
+    """Schema for a retrieved document chunk"""
+    content: str = Field(..., description="Chunk content (may be truncated)")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Chunk metadata")
+    score: float = Field(..., ge=0.0, le=1.0, description="Relevance score")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "What is AI?",
-                "answer": "Artificial Intelligence is a branch of computer science...",
-                "strategy_used": "simple",
-                "processing_time": 1.23,
+                "content": "John Doe has 5 years of experience in Python...",
+                "metadata": {
+                    "source": "john_cv.pdf",
+                    "chunk_index": 2,
+                    "document_id": "doc-123"
+                },
+                "score": 0.89
+            }
+        }
+
+
+class InternetSource(BaseModel):
+    """Schema for an internet search result from Tavily"""
+    title: str = Field(..., description="Title of the source")
+    snippet: str = Field(..., description="Content snippet from the source")
+    url: str = Field(..., description="URL of the source")
+    source: str = Field(..., description="Domain/source name")
+    score: Optional[float] = Field(default=None, description="Relevance score")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "title": "Machine Learning Basics | IBM",
+                "snippet": "Machine learning is a branch of AI...",
+                "url": "https://www.ibm.com/topics/machine-learning",
+                "source": "ibm.com",
+                "score": 0.95
+            }
+        }
+
+
+class AgentExecutionStep(BaseModel):
+    """Schema for a single ReAct agent execution step"""
+    step_number: Optional[int] = Field(default=None, description="Step sequence number")
+    type: str = Field(..., description="Step type: THOUGHT, ACTION, OBSERVATION, ERROR")
+    content: str = Field(..., description="Step content/description")
+    timestamp: str = Field(..., description="ISO timestamp of the step")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "step_number": 1,
+                "type": "THOUGHT",
+                "content": "Analyzing query - likely needs internet search",
+                "timestamp": "2025-01-09T10:30:00.123Z"
+            }
+        }
+
+
+class RelevanceCheck(BaseModel):
+    """Schema for semantic relevance verification"""
+    is_relevant: bool = Field(..., description="Whether results are truly relevant")
+    verdict: str = Field(..., description="RELEVANT, NOT_RELEVANT, or CHECK_FAILED")
+    reason: str = Field(..., description="Explanation for the verdict")
+    score: float = Field(..., ge=0.0, le=1.0, description="Relevance score")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "is_relevant": False,
+                "verdict": "NOT_RELEVANT",
+                "reason": "Chunks discuss Bahria University, not AIR University",
+                "score": 0.75
+            }
+        }
+
+
+class RAGQueryResponse(BaseModel):
+    """Enhanced RAG query response with Agentic ReAct support"""
+    query: str = Field(..., description="Original query")
+    answer: str = Field(..., description="Generated answer")
+    strategy_used: str = Field(..., description="Strategy that was used")
+    processing_time: float = Field(..., ge=0.0, description="Total processing time in seconds")
+    retrieved_chunks: List[Dict[str, Any]] = Field(default_factory=list, description="Chunks from ChromaDB")
+    confidence_score: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Confidence score")
+    
+    # ⭐ New Agentic RAG fields
+    source: Optional[str] = Field(default=None, description="Answer source: chromadb, internet, general_knowledge")
+    agent_type: Optional[str] = Field(default=None, description="Agent type: coordinator_react, simple, etc.")
+    execution_steps: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="ReAct agent execution trace (THOUGHT → ACTION → OBSERVATION)"
+    )
+    internet_sources: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Internet sources from Tavily (if used)"
+    )
+    agent_steps_count: Optional[int] = Field(default=None, description="Total agent execution steps")
+    relevance_check: Optional[Dict[str, Any]] = Field(default=None, description="Semantic relevance result")
+    fallback_used: Optional[bool] = Field(default=None, description="Whether fallback was used")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query": "What is machine learning?",
+                "answer": "Machine learning is a branch of AI...",
+                "strategy_used": "agentic",
+                "processing_time": 4.52,
                 "retrieved_chunks": [],
-                "confidence_score": 0.85
+                "confidence_score": 0.85,
+                "source": "internet",
+                "agent_type": "coordinator_react",
+                "execution_steps": [
+                    {
+                        "step_number": 1,
+                        "type": "THOUGHT",
+                        "content": "Analyzing query...",
+                        "timestamp": "2025-01-09T10:30:00.000Z"
+                    }
+                ],
+                "internet_sources": [
+                    {
+                        "title": "What is ML? | IBM",
+                        "snippet": "Machine learning...",
+                        "url": "https://ibm.com/ml",
+                        "source": "ibm.com",
+                        "score": 0.95
+                    }
+                ],
+                "agent_steps_count": 8,
+                "fallback_used": True
             }
         }
 
@@ -535,6 +683,97 @@ class DocumentList(BaseModel):
 
 
 # ============================================================
+# AGENT EXECUTION DEBUG SCHEMAS
+# ============================================================
+
+class AgentExecutionDetail(BaseModel):
+    """Detailed agent execution information for debugging"""
+    query_id: str = Field(..., description="Query ID")
+    query_text: str = Field(..., description="Original query")
+    answer_preview: str = Field(..., description="Preview of the answer")
+    strategy_used: str = Field(..., description="Strategy used")
+    source: str = Field(..., description="Answer source")
+    agent_type: str = Field(..., description="Agent type")
+    total_steps: int = Field(..., ge=0, description="Total execution steps")
+    execution_trace: List[AgentExecutionStep] = Field(..., description="Full ReAct trace")
+    internet_sources: List[InternetSource] = Field(default_factory=list)
+    processing_time: float = Field(..., description="Processing time in seconds")
+    confidence_score: float = Field(..., description="Confidence score")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query_id": "query-abc-123",
+                "query_text": "What is Python?",
+                "answer_preview": "Python is a high-level programming language...",
+                "strategy_used": "agentic",
+                "source": "internet",
+                "agent_type": "coordinator_react",
+                "total_steps": 8,
+                "execution_trace": [],
+                "internet_sources": [],
+                "processing_time": 4.5,
+                "confidence_score": 0.85
+            }
+        }
+
+
+class AgentExecutionSummary(BaseModel):
+    """Summary of an agent execution"""
+    query_id: str
+    query_text: str
+    strategy: str
+    source: str
+    agent_type: str
+    total_steps: int
+    step_breakdown: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Count of each step type (THOUGHT, ACTION, etc.)"
+    )
+    processing_time: float
+    confidence_score: float
+    created_at: str
+    used_internet: bool = Field(..., description="Whether internet search was used")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query_id": "query-abc-123",
+                "query_text": "What is machine learning?",
+                "strategy": "agentic",
+                "source": "internet",
+                "agent_type": "coordinator_react",
+                "total_steps": 8,
+                "step_breakdown": {
+                    "THOUGHT": 3,
+                    "ACTION": 3,
+                    "OBSERVATION": 2
+                },
+                "processing_time": 4.5,
+                "confidence_score": 0.85,
+                "created_at": "2025-01-09T10:30:00.000Z",
+                "used_internet": True
+            }
+        }
+
+
+class AgentExecutionListResponse(BaseModel):
+    """List of agent executions"""
+    total: int = Field(..., ge=0, description="Total executions")
+    showing: int = Field(..., ge=0, description="Executions in this response")
+    executions: List[AgentExecutionSummary] = Field(..., description="List of executions")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "total": 150,
+                "showing": 10,
+                "executions": []
+            }
+        }
+
+
+# ============================================================
 # HEALTH & STATS SCHEMAS
 # ============================================================
 
@@ -550,11 +789,14 @@ class HealthCheck(BaseModel):
             "example": {
                 "status": "healthy",
                 "timestamp": "2025-10-20T10:00:00",
-                "version": "1.0.0",
+                "version": "2.1.0-agentic",
                 "components": {
+                    "database": "operational",
                     "llm_service": "operational",
+                    "embedding_service": "operational",
                     "vector_store": "operational",
-                    "database": "operational"
+                    "tavily_api": "operational",
+                    "coordinator_agent": "operational"
                 }
             }
         }
@@ -566,12 +808,26 @@ class HealthCheckResponse(HealthCheck):
 
 
 class SystemStats(BaseModel):
-    """System statistics response"""
+    """Enhanced system statistics with agent metrics"""
     total_documents: int
     total_queries: int
     total_chunks: int
     average_processing_time: float
     strategy_distribution: Dict[str, int]
+    
+    # ⭐ New agent-related stats
+    source_distribution: Optional[Dict[str, int]] = Field(
+        default=None,
+        description="Distribution of answer sources (chromadb, internet, general_knowledge)"
+    )
+    agent_usage: Optional[Dict[str, int]] = Field(
+        default=None,
+        description="Usage count of different agent types"
+    )
+    internet_search_count: Optional[int] = Field(
+        default=None,
+        description="Number of queries that used internet search"
+    )
     
     class Config:
         json_schema_extra = {
@@ -584,7 +840,70 @@ class SystemStats(BaseModel):
                     "simple": 800,
                     "agentic": 300,
                     "auto": 150
-                }
+                },
+                "source_distribution": {
+                    "chromadb": 800,
+                    "internet": 350,
+                    "general_knowledge": 100
+                },
+                "agent_usage": {
+                    "coordinator_react": 1250
+                },
+                "internet_search_count": 350
+            }
+        }
+
+
+# ============================================================
+# SESSION SCHEMAS
+# ============================================================
+
+class SessionCreate(BaseModel):
+    """Schema for creating a new session"""
+    user_id: Optional[str] = Field(default=None, description="User ID")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_id": "user-123"
+            }
+        }
+
+
+class SessionResponse(BaseModel):
+    """Session response schema"""
+    session_id: str
+    user_id: Optional[str]
+    started_at: str
+    status: str
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "session_id": "session-abc-123",
+                "user_id": "user-123",
+                "started_at": "2025-01-09T10:30:00.000Z",
+                "status": "active"
+            }
+        }
+
+
+# ============================================================
+# ERROR SCHEMAS
+# ============================================================
+
+class ErrorResponse(BaseModel):
+    """Error response schema"""
+    error: str = Field(..., description="Error message")
+    detail: Optional[str] = Field(default=None, description="Detailed error information")
+    timestamp: str = Field(..., description="Error timestamp")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "error": "Query processing failed",
+                "detail": "Vector store is not initialized",
+                "timestamp": "2025-01-09T10:30:00.000Z"
             }
         }
 
@@ -595,3 +914,4 @@ class SystemStats(BaseModel):
 
 # These aliases ensure backward compatibility
 RAGQuery = RAGQueryRequest
+RAGStatistics = SystemStats

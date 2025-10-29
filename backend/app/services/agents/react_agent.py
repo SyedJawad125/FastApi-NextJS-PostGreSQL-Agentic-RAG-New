@@ -7,7 +7,7 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-from app.agents.base_agent import BaseAgent
+from app.services.agents.base_agent import BaseAgent
 from app.core.enums import AgentType, AgentStatus
 from app.core.config import settings
 
